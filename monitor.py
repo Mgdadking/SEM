@@ -1,20 +1,14 @@
 """
-نظام مراقبة منصة ادرس في مصر للتخصصات - نسخة Web Service
-محدث للعمل على Render المجاني مع Flask
+نظام مراقبة منصة ادرس في مصر - نسخة Playwright
+أسرع وأكثر استقراراً للعمل على Render
 """
 
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
+from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
 import time
-import json
-from datetime import datetime
-import requests
 import os
 import threading
+from datetime import datetime
+import requests
 from flask import Flask, jsonify
 
 # إنشاء Flask app
@@ -26,8 +20,8 @@ class StudyInEgyptMonitor:
         username: اسم المستخدم للمنصة
         password: كلمة المرور
         target_programs: قائمة بأسماء التخصصات المطلوبة
-        telegram_token: توكن بوت التليجرام (اختياري)
-        telegram_chat_id: معرف المحادثة في التليجرام (اختياري)
+        telegram_token: توكن بوت التليجرام
+        telegram_chat_id: معرف المحادثة في التليجرام
         """
         self.username = username
         self.password = password
@@ -37,36 +31,11 @@ class StudyInEgyptMonitor:
         self.found_programs = set()
         self.last_programs = set()
         self.is_running = False
-        self.driver = None
+        self.playwright = None
+        self.browser = None
+        self.page = None
         self.status = {"state": "initialized", "last_check": None, "checks_count": 0}
-        
-    def init_driver(self):
-        """تهيئة المتصفح"""
-        chrome_options = Options()
-        chrome_options.add_argument('--headless=new')
-        chrome_options.add_argument('--no-sandbox')
-        chrome_options.add_argument('--disable-dev-shm-usage')
-        chrome_options.add_argument('--disable-gpu')
-        chrome_options.add_argument('--disable-software-rasterizer')
-        chrome_options.add_argument('--disable-extensions')
-        chrome_options.add_argument('--disable-setuid-sandbox')
-        chrome_options.add_argument('--window-size=1920,1080')
-        chrome_options.add_argument('--disable-blink-features=AutomationControlled')
-        chrome_options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
-        chrome_options.add_argument('--disable-web-security')
-        chrome_options.add_argument('--allow-running-insecure-content')
-        
-        # للعمل على Render - تجربة مسارات مختلفة
-        chrome_bin = os.environ.get("CHROME_BIN")
-        if chrome_bin:
-            chrome_options.binary_location = chrome_bin
-        
-        try:
-            self.driver = webdriver.Chrome(options=chrome_options)
-            self.base_url = "https://admission.study-in-egypt.gov.eg"
-        except Exception as e:
-            self.log_message(f"خطأ في تهيئة ChromeDriver: {e}")
-            raise
+        self.base_url = "https://admission.study-in-egypt.gov.eg"
         
     def send_telegram_alert(self, message):
         """إرسال تنبيه عبر التليجرام"""
@@ -97,78 +66,124 @@ class StudyInEgyptMonitor:
         except:
             pass
     
+    def init_browser(self):
+        """تهيئة المتصفح"""
+        try:
+            self.log_message("تهيئة Playwright...")
+            self.playwright = sync_playwright().start()
+            
+            self.log_message("تشغيل المتصفح...")
+            self.browser = self.playwright.chromium.launch(
+                headless=True,
+                args=[
+                    '--no-sandbox',
+                    '--disable-setuid-sandbox',
+                    '--disable-dev-shm-usage',
+                    '--disable-gpu',
+                ]
+            )
+            
+            self.log_message("إنشاء صفحة جديدة...")
+            context = self.browser.new_context(
+                viewport={'width': 1920, 'height': 1080},
+                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            )
+            self.page = context.new_page()
+            
+            # زيادة timeout للصفحات البطيئة
+            self.page.set_default_timeout(60000)  # 60 ثانية
+            
+            self.log_message("✅ تم تهيئة المتصفح بنجاح")
+            return True
+            
+        except Exception as e:
+            self.log_message(f"❌ خطأ في تهيئة المتصفح: {e}")
+            return False
+    
     def login(self):
         """تسجيل الدخول للمنصة"""
         try:
-            self.log_message("جاري تسجيل الدخول...")
-            self.driver.get(f"{self.base_url}/login")
+            self.log_message("=" * 50)
+            self.log_message("بدء عملية تسجيل الدخول...")
+            self.log_message("=" * 50)
             
-            wait = WebDriverWait(self.driver, 30)
+            self.log_message(f"فتح صفحة تسجيل الدخول: {self.base_url}/login")
+            self.page.goto(f"{self.base_url}/login", wait_until="networkidle")
             
-            # انتظار حقول الإدخال
-            self.log_message("انتظار ظهور حقول تسجيل الدخول...")
-            username_field = wait.until(EC.presence_of_element_located((By.NAME, "username")))
-            password_field = wait.until(EC.presence_of_element_located((By.NAME, "password")))
+            self.log_message("⏳ انتظار تحميل الصفحة...")
+            time.sleep(3)
             
-            self.log_message("إدخال اسم المستخدم وكلمة المرور...")
-            username_field.clear()
-            username_field.send_keys(self.username)
+            # انتظار ظهور حقول الإدخال
+            self.log_message("البحث عن حقل اسم المستخدم...")
+            self.page.wait_for_selector('input[name="username"]', timeout=30000)
+            
+            self.log_message("✅ وجدت حقول الإدخال")
+            
+            # إدخال البيانات
+            self.log_message("إدخال اسم المستخدم...")
+            self.page.fill('input[name="username"]', self.username)
             time.sleep(1)
             
-            password_field.clear()
-            password_field.send_keys(self.password)
+            self.log_message("إدخال كلمة المرور...")
+            self.page.fill('input[name="password"]', self.password)
             time.sleep(1)
             
-            # البحث عن زر تسجيل الدخول بطرق مختلفة
+            # البحث عن زر تسجيل الدخول والضغط عليه
             self.log_message("البحث عن زر تسجيل الدخول...")
             
-            # الطريقة 1: بالنص العربي
-            try:
-                login_button = wait.until(EC.element_to_be_clickable(
-                    (By.XPATH, "//button[.//span[contains(text(), 'تسجيل الدخول')]]")
-                ))
-                self.log_message("وجدت زر تسجيل الدخول (الطريقة 1)")
-            except:
-                # الطريقة 2: button مع div و span
-                try:
-                    login_button = wait.until(EC.element_to_be_clickable(
-                        (By.XPATH, "//button[.//div/span[text()='تسجيل الدخول']]")
-                    ))
-                    self.log_message("وجدت زر تسجيل الدخول (الطريقة 2)")
-                except:
-                    # الطريقة 3: أي زر submit
-                    login_button = wait.until(EC.element_to_be_clickable(
-                        (By.XPATH, "//button[@type='submit']")
-                    ))
-                    self.log_message("وجدت زر تسجيل الدخول (الطريقة 3)")
+            # محاولات متعددة للعثور على الزر
+            button_selectors = [
+                'button:has-text("تسجيل الدخول")',
+                'button[type="submit"]',
+                'button:has(span:text("تسجيل الدخول"))',
+            ]
             
-            self.log_message("الضغط على زر تسجيل الدخول...")
-            login_button.click()
+            clicked = False
+            for selector in button_selectors:
+                try:
+                    self.log_message(f"محاولة: {selector}")
+                    self.page.click(selector, timeout=5000)
+                    clicked = True
+                    self.log_message(f"✅ تم الضغط على الزر بنجاح")
+                    break
+                except:
+                    continue
+            
+            if not clicked:
+                self.log_message("❌ لم أجد زر تسجيل الدخول")
+                return False
             
             # انتظار اكتمال تسجيل الدخول
+            self.log_message("⏳ انتظار اكتمال تسجيل الدخول...")
             time.sleep(5)
             
             # التحقق من نجاح تسجيل الدخول
-            current_url = self.driver.current_url
+            current_url = self.page.url
             self.log_message(f"الصفحة الحالية: {current_url}")
             
             if "login" not in current_url.lower():
-                self.log_message("✅ تم تسجيل الدخول بنجاح")
+                self.log_message("✅✅✅ تم تسجيل الدخول بنجاح! ✅✅✅")
                 self.status["state"] = "logged_in"
                 return True
             else:
                 self.log_message("⚠️ ما زلنا في صفحة تسجيل الدخول - قد تكون بيانات خاطئة")
+                
+                # محاولة أخذ لقطة شاشة
+                try:
+                    self.page.screenshot(path="login_failed.png")
+                    self.log_message("📸 تم حفظ لقطة شاشة: login_failed.png")
+                except:
+                    pass
+                
                 self.status["state"] = "login_failed"
                 return False
             
         except Exception as e:
             self.log_message(f"❌ خطأ في تسجيل الدخول: {e}")
-            self.log_message(f"الصفحة الحالية: {self.driver.current_url}")
             
-            # محاولة أخذ لقطة شاشة للتشخيص
             try:
-                self.driver.save_screenshot("login_error.png")
-                self.log_message("تم حفظ لقطة شاشة للخطأ: login_error.png")
+                self.page.screenshot(path="login_error.png")
+                self.log_message("📸 تم حفظ لقطة شاشة: login_error.png")
             except:
                 pass
             
@@ -178,50 +193,52 @@ class StudyInEgyptMonitor:
     def check_programs(self, request_url):
         """فحص التخصصات المتاحة"""
         try:
-            self.log_message(f"فتح صفحة التقديم: {request_url}")
-            self.driver.get(request_url)
-            time.sleep(5)
+            self.log_message(f"🔍 فتح صفحة التقديم...")
+            self.page.goto(request_url, wait_until="networkidle")
+            time.sleep(3)
             
-            # فتح القائمة المنسدلة للحصول على جميع الخيارات
-            self.log_message("البحث عن القائمة المنسدلة للتخصصات...")
+            self.log_message("البحث عن القائمة المنسدلة...")
             
             current_programs = set()
             
             try:
                 # البحث عن react-select control
-                select_control = self.driver.find_element(By.XPATH, "//div[contains(@class, 'react-select__control')]")
-                self.log_message("✅ وجدت القائمة المنسدلة")
-                
-                # الضغط لفتح القائمة
-                select_control.click()
+                self.log_message("محاولة فتح القائمة المنسدلة...")
+                self.page.click('div[class*="react-select__control"]', timeout=10000)
                 time.sleep(2)
                 
                 # الحصول على جميع الخيارات
-                options = self.driver.find_elements(By.XPATH, "//div[contains(@class, 'react-select__option')]")
-                self.log_message(f"وجدت {len(options)} خيار في القائمة")
+                options = self.page.query_selector_all('div[class*="react-select__option"]')
+                self.log_message(f"✅ وجدت {len(options)} خيار")
                 
                 for option in options:
-                    text = option.text.strip()
+                    text = option.inner_text().strip()
                     if text and len(text) > 3:
                         current_programs.add(text)
-                        self.log_message(f"  - {text}")
+                        self.log_message(f"  📋 {text}")
+                
+                # إغلاق القائمة
+                self.page.keyboard.press("Escape")
+                time.sleep(1)
                 
             except Exception as e:
                 self.log_message(f"⚠️ خطأ في فتح القائمة: {e}")
-                # محاولة الحصول على القيمة المحددة حالياً
+                
+                # محاولة الحصول على القيمة الحالية
                 try:
-                    current_value = self.driver.find_element(By.XPATH, "//div[contains(@class, 'react-select__single-value')]")
-                    if current_value.text.strip():
-                        current_programs.add(current_value.text.strip())
-                        self.log_message(f"القيمة الحالية: {current_value.text.strip()}")
+                    current_value = self.page.query_selector('div[class*="react-select__single-value"]')
+                    if current_value:
+                        text = current_value.inner_text().strip()
+                        if text:
+                            current_programs.add(text)
+                            self.log_message(f"القيمة الحالية: {text}")
                 except:
                     pass
             
-            self.log_message(f"إجمالي التخصصات المتاحة: {len(current_programs)}")
+            self.log_message(f"📊 إجمالي التخصصات: {len(current_programs)}")
             
-            # البحث عن التخصصات الجديدة
+            # البحث عن تخصصات جديدة
             new_programs = current_programs - self.last_programs
-            
             if new_programs:
                 self.log_message(f"🆕 تخصصات جديدة: {len(new_programs)}")
                 for prog in new_programs:
@@ -237,20 +254,23 @@ class StudyInEgyptMonitor:
                     if target.lower() in program.lower() and program not in self.found_programs:
                         self.found_programs.add(program)
                         
-                        self.log_message(f"🎯🎯🎯 وجدت التخصص المطلوب: {program} 🎯🎯🎯")
+                        self.log_message("=" * 60)
+                        self.log_message(f"🎯🎯🎯 وجدت التخصص: {program} 🎯🎯🎯")
+                        self.log_message("=" * 60)
                         
-                        # محاولة اختيار التخصص
+                        # اختيار التخصص
                         if self.select_program(program):
-                            # الضغط على زر الاستمرار
+                            # الضغط على استمرار
                             if self.click_continue_button():
                                 alert = f"""
-🎉🎉🎉 <b>تم العثور على التخصص وتم اختياره!</b> 🎉🎉🎉
+🎉🎉🎉 <b>تم العثور على التخصص!</b> 🎉🎉🎉
 
 📚 <b>التخصص:</b>
 {program}
 
-✅ <b>الحالة:</b>
-تم اختيار التخصص والضغط على زر "استمرار"
+✅ <b>تم:</b>
+• اختيار التخصص
+• الضغط على "استمرار"
 
 ⏰ <b>الوقت:</b>
 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
@@ -258,154 +278,151 @@ class StudyInEgyptMonitor:
 🔗 <b>الرابط:</b>
 {request_url}
 
-⚡⚡⚡ <b>اذهب الآن وأكمل التقديم يدوياً!</b> ⚡⚡⚡
-
-النظام سيتوقف الآن - أكمل أنت الخطوات المتبقية.
+⚡⚡⚡ <b>اذهب الآن وأكمل التقديم!</b> ⚡⚡⚡
                                 """
                                 
-                                self.log_message("📤 إرسال تنبيه التليجرام...")
                                 self.send_telegram_alert(alert)
-                                self.status["state"] = "target_found_and_selected"
+                                self.status["state"] = "success"
                                 
-                                # حفظ لقطة شاشة
+                                # لقطة شاشة
                                 try:
-                                    screenshot_name = f"success_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
-                                    self.driver.save_screenshot(screenshot_name)
-                                    self.log_message(f"📸 تم حفظ لقطة الشاشة: {screenshot_name}")
+                                    filename = f"success_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+                                    self.page.screenshot(path=filename)
+                                    self.log_message(f"📸 لقطة الشاشة: {filename}")
                                 except:
                                     pass
                                 
-                                self.log_message("✅ تم! النظام سيتوقف الآن...")
-                                self.log_message("👉 أكمل التقديم يدوياً من الرابط")
-                                
-                                # إيقاف المراقبة
+                                self.log_message("✅ تم! سأتوقف الآن...")
                                 self.is_running = False
                                 return True
-                            else:
-                                self.log_message("⚠️ لم أستطع الضغط على زر الاستمرار")
-                        else:
-                            self.log_message("⚠️ لم أستطع اختيار التخصص تلقائياً")
             
             return False
             
         except Exception as e:
-            self.log_message(f"❌ خطأ أثناء الفحص: {e}")
+            self.log_message(f"❌ خطأ في الفحص: {e}")
             self.status["state"] = "check_error"
             return False
     
     def select_program(self, program_name):
-        """اختيار التخصص من القائمة المنسدلة"""
+        """اختيار التخصص"""
         try:
-            self.log_message(f"محاولة اختيار التخصص: {program_name}")
+            self.log_message(f"اختيار: {program_name}")
             
-            # فتح القائمة إذا لم تكن مفتوحة
-            select_control = self.driver.find_element(By.XPATH, "//div[contains(@class, 'react-select__control')]")
-            select_control.click()
+            # فتح القائمة
+            self.page.click('div[class*="react-select__control"]')
             time.sleep(2)
             
-            # البحث عن الخيار المطلوب والضغط عليه
-            options = self.driver.find_elements(By.XPATH, "//div[contains(@class, 'react-select__option')]")
+            # البحث والضغط على الخيار
+            options = self.page.query_selector_all('div[class*="react-select__option"]')
             
             for option in options:
-                if program_name in option.text:
-                    self.log_message(f"✅ وجدت الخيار، سأضغط عليه...")
+                if program_name in option.inner_text():
                     option.click()
                     time.sleep(2)
-                    self.log_message("✅ تم اختيار التخصص بنجاح")
+                    self.log_message("✅ تم اختيار التخصص")
                     return True
             
-            self.log_message("❌ لم أجد الخيار في القائمة")
+            self.log_message("❌ لم أجد الخيار")
             return False
             
         except Exception as e:
-            self.log_message(f"❌ خطأ في اختيار التخصص: {e}")
+            self.log_message(f"❌ خطأ في الاختيار: {e}")
             return False
     
     def click_continue_button(self):
-        """الضغط على زر الاستمرار"""
+        """الضغط على زر استمرار"""
         try:
-            self.log_message("البحث عن زر الاستمرار...")
+            self.log_message("البحث عن زر استمرار...")
             
-            wait = WebDriverWait(self.driver, 10)
-            
-            # محاولات متعددة للعثور على زر الاستمرار
-            continue_selectors = [
-                "//button[.//span[contains(text(), 'إستمرار')]]",
-                "//button[.//div/span[text()='إستمرار']]",
-                "//div[contains(text(), 'إستمرار')]/..",
-                "//span[text()='إستمرار']/../..",
+            button_selectors = [
+                'button:has-text("إستمرار")',
+                'button:has-text("استمرار")',
+                'button:has(span:text("إستمرار"))',
+                'button:has(span:text("استمرار"))',
             ]
             
-            for selector in continue_selectors:
+            for selector in button_selectors:
                 try:
-                    continue_button = wait.until(EC.element_to_be_clickable((By.XPATH, selector)))
-                    self.log_message(f"✅ وجدت زر الاستمرار")
-                    continue_button.click()
+                    self.page.click(selector, timeout=5000)
                     time.sleep(2)
-                    self.log_message("✅ تم الضغط على زر الاستمرار")
+                    self.log_message("✅ تم الضغط على استمرار")
                     return True
                 except:
                     continue
             
-            self.log_message("❌ لم أجد زر الاستمرار")
+            self.log_message("❌ لم أجد زر استمرار")
             return False
             
         except Exception as e:
-            self.log_message(f"❌ خطأ في الضغط على زر الاستمرار: {e}")
+            self.log_message(f"❌ خطأ: {e}")
             return False
     
     def start_monitoring(self, request_url, interval=30):
-        """بدء المراقبة المستمرة"""
+        """بدء المراقبة"""
         self.is_running = True
-        self.log_message("=" * 50)
-        self.log_message("بدء نظام المراقبة")
-        self.log_message("=" * 50)
-        self.log_message(f"التخصصات المستهدفة: {', '.join(self.target_programs)}")
-        self.log_message(f"فترة الفحص: كل {interval} ثانية")
+        self.log_message("=" * 60)
+        self.log_message("🚀 بدء نظام المراقبة")
+        self.log_message("=" * 60)
+        self.log_message(f"📚 التخصصات: {', '.join(self.target_programs)}")
+        self.log_message(f"⏱️ فترة الفحص: {interval} ثانية")
         
-        self.init_driver()
-        
-        if not self.login():
-            self.log_message("فشل تسجيل الدخول. إيقاف البرنامج.")
-            self.is_running = False
+        if not self.init_browser():
+            self.log_message("❌ فشل تهيئة المتصفح")
             return
         
-        self.send_telegram_alert("🚀 تم بدء نظام المراقبة بنجاح!")
+        if not self.login():
+            self.log_message("❌ فشل تسجيل الدخول")
+            self.cleanup()
+            return
+        
+        self.send_telegram_alert("🚀 بدأ النظام!")
         
         check_count = 0
         
         try:
             while self.is_running:
                 check_count += 1
-                self.log_message(f"\n--- الفحص رقم {check_count} ---")
+                self.log_message(f"\n{'='*60}")
+                self.log_message(f"🔍 الفحص رقم {check_count}")
+                self.log_message(f"{'='*60}")
                 
                 found = self.check_programs(request_url)
                 
                 if found:
-                    self.log_message("✅ تم العثور على تخصص مستهدف!")
+                    self.log_message("✅ تم!")
+                    break
                 else:
-                    self.log_message("⏳ لم يتم العثور على تخصصات جديدة")
+                    self.log_message(f"⏳ انتظار {interval} ثانية...")
+                    time.sleep(interval)
                 
-                self.log_message(f"انتظار {interval} ثانية للفحص التالي...")
-                time.sleep(interval)
-                
+        except KeyboardInterrupt:
+            self.log_message("⛔ توقف يدوي")
+            self.send_telegram_alert("⛔ توقف النظام")
         except Exception as e:
-            self.log_message(f"❌ خطأ غير متوقع: {e}")
-            self.status["state"] = "error"
-            self.send_telegram_alert(f"❌ خطأ في النظام: {e}")
+            self.log_message(f"❌ خطأ: {e}")
+            self.send_telegram_alert(f"❌ خطأ: {e}")
         finally:
-            if self.driver:
-                self.driver.quit()
+            self.cleanup()
+    
+    def cleanup(self):
+        """تنظيف الموارد"""
+        try:
+            if self.browser:
+                self.browser.close()
+            if self.playwright:
+                self.playwright.stop()
+            self.log_message("✅ تم التنظيف")
+        except:
+            pass
     
     def get_status(self):
-        """الحصول على حالة النظام"""
+        """حالة النظام"""
         return self.status
     
     def stop(self):
-        """إيقاف المراقبة"""
+        """إيقاف"""
         self.is_running = False
-        if self.driver:
-            self.driver.quit()
+        self.cleanup()
 
 # المراقب العام
 monitor = None
@@ -425,7 +442,7 @@ def start_monitor_thread():
     telegram_chat_id = os.environ.get("TELEGRAM_CHAT_ID")
     
     if not all([USERNAME, PASSWORD, REQUEST_URL, target_programs]):
-        print("❌ خطأ: يجب تعيين جميع المتغيرات البيئية المطلوبة!")
+        print("❌ خطأ: متغيرات البيئة غير مكتملة!")
         return
     
     monitor = StudyInEgyptMonitor(
@@ -442,16 +459,14 @@ def start_monitor_thread():
 # Flask Routes
 @app.route('/')
 def home():
-    """صفحة رئيسية بسيطة"""
     return jsonify({
         "status": "running",
-        "service": "Study Egypt Monitor",
-        "message": "النظام يعمل بشكل طبيعي"
+        "service": "Study Egypt Monitor - Playwright",
+        "message": "النظام يعمل"
     })
 
 @app.route('/health')
 def health():
-    """فحص صحة النظام"""
     if monitor:
         return jsonify({
             "status": "healthy",
@@ -461,16 +476,15 @@ def health():
 
 @app.route('/status')
 def status():
-    """حالة المراقبة التفصيلية"""
     if monitor:
         return jsonify(monitor.get_status())
     return jsonify({"status": "not_started"})
 
 if __name__ == "__main__":
-    # بدء المراقبة في خيط منفصل
+    # بدء المراقبة
     monitor_thread = threading.Thread(target=start_monitor_thread, daemon=True)
     monitor_thread.start()
     
-    # بدء Flask server
+    # بدء Flask
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
