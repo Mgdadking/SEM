@@ -1,6 +1,6 @@
 """
-نظام مراقبة منصة ادرس في مصر للتخصصات - محدث
-يراقب ظهور التخصصات المطلوبة ويرسل تنبيه فوري
+نظام مراقبة منصة ادرس في مصر للتخصصات - نسخة Web Service
+محدث للعمل على Render المجاني مع Flask
 """
 
 from selenium import webdriver
@@ -14,6 +14,11 @@ import json
 from datetime import datetime
 import requests
 import os
+import threading
+from flask import Flask, jsonify
+
+# إنشاء Flask app
+app = Flask(__name__)
 
 class StudyInEgyptMonitor:
     def __init__(self, username, password, target_programs, telegram_token=None, telegram_chat_id=None):
@@ -31,8 +36,12 @@ class StudyInEgyptMonitor:
         self.telegram_chat_id = telegram_chat_id
         self.found_programs = set()
         self.last_programs = set()
+        self.is_running = False
+        self.driver = None
+        self.status = {"state": "initialized", "last_check": None, "checks_count": 0}
         
-        # إعداد Chrome للعمل في الخلفية
+    def init_driver(self):
+        """تهيئة المتصفح"""
         chrome_options = Options()
         chrome_options.add_argument('--headless')
         chrome_options.add_argument('--no-sandbox')
@@ -69,9 +78,8 @@ class StudyInEgyptMonitor:
         """تسجيل رسالة مع الوقت"""
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         log = f"[{timestamp}] {message}"
-        print(log)
+        print(log, flush=True)
         
-        # حفظ في ملف
         try:
             with open("monitor_log.txt", "a", encoding="utf-8") as f:
                 f.write(log + "\n")
@@ -86,25 +94,24 @@ class StudyInEgyptMonitor:
             
             wait = WebDriverWait(self.driver, 20)
             
-            # انتظار حقل اسم المستخدم
             username_field = wait.until(EC.presence_of_element_located((By.NAME, "username")))
             password_field = self.driver.find_element(By.NAME, "password")
             
-            # إدخال البيانات
             username_field.send_keys(self.username)
             password_field.send_keys(self.password)
             
-            # الضغط على زر تسجيل الدخول
             login_button = self.driver.find_element(By.XPATH, "//button[@type='submit']")
             login_button.click()
             
             time.sleep(5)
             
             self.log_message("تم تسجيل الدخول بنجاح")
+            self.status["state"] = "logged_in"
             return True
             
         except Exception as e:
             self.log_message(f"خطأ في تسجيل الدخول: {e}")
+            self.status["state"] = "login_failed"
             return False
     
     def check_programs(self, request_url):
@@ -113,7 +120,6 @@ class StudyInEgyptMonitor:
             self.driver.get(request_url)
             time.sleep(3)
             
-            # البحث عن عناصر react-select التي تحتوي على التخصصات
             selectors = [
                 "//div[contains(@class, 'react-select__single-value')]",
                 "//div[contains(@class, 'react-select__option')]",
@@ -131,21 +137,17 @@ class StudyInEgyptMonitor:
                 except:
                     continue
             
-            # فتح القائمة المنسدلة للحصول على جميع الخيارات
             try:
-                # البحث عن عنصر react-select
                 select_element = self.driver.find_element(By.XPATH, "//div[contains(@class, 'react-select__control')]")
                 select_element.click()
                 time.sleep(2)
                 
-                # الحصول على جميع الخيارات
                 options = self.driver.find_elements(By.XPATH, "//div[contains(@class, 'react-select__option')]")
                 for option in options:
                     text = option.text.strip()
                     if text and len(text) > 3:
                         current_programs.add(text)
                 
-                # إغلاق القائمة
                 select_element.click()
                 
             except Exception as e:
@@ -153,7 +155,6 @@ class StudyInEgyptMonitor:
             
             self.log_message(f"تم العثور على {len(current_programs)} تخصص")
             
-            # البحث عن التخصصات الجديدة
             new_programs = current_programs - self.last_programs
             
             if new_programs:
@@ -162,11 +163,11 @@ class StudyInEgyptMonitor:
                     self.log_message(f"  - {prog}")
             
             self.last_programs = current_programs
+            self.status["last_check"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            self.status["checks_count"] += 1
             
-            # التحقق من التخصصات المستهدفة
             for program in current_programs:
                 for target in self.target_programs:
-                    # مقارنة غير حساسة لحالة الأحرف وتحتوي على الكلمة
                     if target.lower() in program.lower() and program not in self.found_programs:
                         self.found_programs.add(program)
                         
@@ -190,8 +191,8 @@ class StudyInEgyptMonitor:
                         
                         self.log_message(f"🎯 تنبيه: تم العثور على {program}")
                         self.send_telegram_alert(alert)
+                        self.status["state"] = "target_found"
                         
-                        # محاولة حفظ لقطة شاشة
                         try:
                             screenshot_name = f"screenshot_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
                             self.driver.save_screenshot(screenshot_name)
@@ -205,31 +206,31 @@ class StudyInEgyptMonitor:
             
         except Exception as e:
             self.log_message(f"خطأ أثناء الفحص: {e}")
+            self.status["state"] = "check_error"
             return False
     
     def start_monitoring(self, request_url, interval=30):
-        """بدء المراقبة المستمرة
-        request_url: رابط صفحة التقديم الخاصة بك
-        interval: الفترة بين كل فحص بالثواني (افتراضي 30 ثانية)
-        """
+        """بدء المراقبة المستمرة"""
+        self.is_running = True
         self.log_message("=" * 50)
         self.log_message("بدء نظام المراقبة")
         self.log_message("=" * 50)
         self.log_message(f"التخصصات المستهدفة: {', '.join(self.target_programs)}")
         self.log_message(f"فترة الفحص: كل {interval} ثانية")
         
-        # تسجيل الدخول
+        self.init_driver()
+        
         if not self.login():
             self.log_message("فشل تسجيل الدخول. إيقاف البرنامج.")
+            self.is_running = False
             return
         
-        # إرسال تنبيه ببدء المراقبة
         self.send_telegram_alert("🚀 تم بدء نظام المراقبة بنجاح!")
         
         check_count = 0
         
         try:
-            while True:
+            while self.is_running:
                 check_count += 1
                 self.log_message(f"\n--- الفحص رقم {check_count} ---")
                 
@@ -243,39 +244,45 @@ class StudyInEgyptMonitor:
                 self.log_message(f"انتظار {interval} ثانية للفحص التالي...")
                 time.sleep(interval)
                 
-        except KeyboardInterrupt:
-            self.log_message("\n⛔ تم إيقاف المراقبة بواسطة المستخدم")
-            self.send_telegram_alert("⛔ تم إيقاف نظام المراقبة")
         except Exception as e:
             self.log_message(f"❌ خطأ غير متوقع: {e}")
+            self.status["state"] = "error"
             self.send_telegram_alert(f"❌ خطأ في النظام: {e}")
         finally:
+            if self.driver:
+                self.driver.quit()
+    
+    def get_status(self):
+        """الحصول على حالة النظام"""
+        return self.status
+    
+    def stop(self):
+        """إيقاف المراقبة"""
+        self.is_running = False
+        if self.driver:
             self.driver.quit()
-    
-    def close(self):
-        """إغلاق المتصفح"""
-        self.driver.quit()
 
+# المراقب العام
+monitor = None
 
-# مثال للاستخدام
-if __name__ == "__main__":
-    # قراءة الإعدادات من متغيرات البيئة (للأمان)
-    USERNAME = os.environ.get("STUDY_USERNAME", "your_username")
-    PASSWORD = os.environ.get("STUDY_PASSWORD", "your_password")
-    REQUEST_URL = os.environ.get("REQUEST_URL", "https://admission.study-in-egypt.gov.eg/services/admission/requests/617947/edit")
+def start_monitor_thread():
+    """بدء المراقبة في خيط منفصل"""
+    global monitor
     
-    # التخصصات المستهدفة
-    target_programs = [
-        "طب اسنان الزقازيق",
-        "علوم الحاسب",
-        # أضف التخصصات المطلوبة هنا
-    ]
+    USERNAME = os.environ.get("STUDY_USERNAME")
+    PASSWORD = os.environ.get("STUDY_PASSWORD")
+    REQUEST_URL = os.environ.get("REQUEST_URL")
     
-    # معلومات التليجرام
+    target_programs = os.environ.get("TARGET_PROGRAMS", "").split(",")
+    target_programs = [p.strip() for p in target_programs if p.strip()]
+    
     telegram_token = os.environ.get("TELEGRAM_TOKEN")
     telegram_chat_id = os.environ.get("TELEGRAM_CHAT_ID")
     
-    # إنشاء المراقب
+    if not all([USERNAME, PASSWORD, REQUEST_URL, target_programs]):
+        print("❌ خطأ: يجب تعيين جميع المتغيرات البيئية المطلوبة!")
+        return
+    
     monitor = StudyInEgyptMonitor(
         username=USERNAME,
         password=PASSWORD,
@@ -284,5 +291,41 @@ if __name__ == "__main__":
         telegram_chat_id=telegram_chat_id
     )
     
-    # بدء المراقبة (فحص كل 30 ثانية)
-    monitor.start_monitoring(request_url=REQUEST_URL, interval=30)
+    interval = int(os.environ.get("CHECK_INTERVAL", "30"))
+    monitor.start_monitoring(request_url=REQUEST_URL, interval=interval)
+
+# Flask Routes
+@app.route('/')
+def home():
+    """صفحة رئيسية بسيطة"""
+    return jsonify({
+        "status": "running",
+        "service": "Study Egypt Monitor",
+        "message": "النظام يعمل بشكل طبيعي"
+    })
+
+@app.route('/health')
+def health():
+    """فحص صحة النظام"""
+    if monitor:
+        return jsonify({
+            "status": "healthy",
+            "monitor_status": monitor.get_status()
+        })
+    return jsonify({"status": "initializing"})
+
+@app.route('/status')
+def status():
+    """حالة المراقبة التفصيلية"""
+    if monitor:
+        return jsonify(monitor.get_status())
+    return jsonify({"status": "not_started"})
+
+if __name__ == "__main__":
+    # بدء المراقبة في خيط منفصل
+    monitor_thread = threading.Thread(target=start_monitor_thread, daemon=True)
+    monitor_thread.start()
+    
+    # بدء Flask server
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
