@@ -284,11 +284,21 @@ class StudyInEgyptMonitor:
             
             # إدخال البيانات
             self.log_message("إدخال اسم المستخدم...")
-            self.page.fill(username_field, self.username)
+            # مسح الحقل أولاً
+            self.page.fill(username_field, '')
+            time.sleep(0.5)
+            # كتابة البيانات ببطء (محاكاة الكتابة البشرية)
+            self.page.type(username_field, self.username, delay=100)
             time.sleep(1)
             
+            # التأكد من إدخال البيانات
+            current_value = self.page.input_value(username_field)
+            self.log_message(f"✅ القيمة المدخلة: {current_value[:3]}***")
+            
             self.log_message("إدخال كلمة المرور...")
-            self.page.fill(password_field, self.password)
+            self.page.fill(password_field, '')
+            time.sleep(0.5)
+            self.page.type(password_field, self.password, delay=100)
             time.sleep(1)
             
             # البحث عن زر تسجيل الدخول والضغط عليه
@@ -304,6 +314,8 @@ class StudyInEgyptMonitor:
                 'input[type="submit"]',
                 'button.btn-primary',
                 'button.submit',
+                'button.ant-btn-primary',
+                '.ant-btn-primary',
             ]
             
             clicked = False
@@ -311,7 +323,11 @@ class StudyInEgyptMonitor:
                 try:
                     self.log_message(f"  محاولة: {selector}")
                     if self.page.locator(selector).count() > 0:
-                        self.page.click(selector, timeout=5000)
+                        # التأكد من أن الزر مرئي وقابل للضغط
+                        self.page.wait_for_selector(selector, state='visible', timeout=5000)
+                        
+                        # محاولة الضغط مع الانتظار
+                        self.page.click(selector, timeout=5000, force=False)
                         clicked = True
                         self.log_message(f"  ✅ تم الضغط على الزر")
                         break
@@ -332,7 +348,59 @@ class StudyInEgyptMonitor:
             
             # انتظار اكتمال تسجيل الدخول
             self.log_message("⏳ انتظار اكتمال تسجيل الدخول...")
-            time.sleep(8)
+            time.sleep(5)
+            
+            # التحقق من وجود رسائل خطأ أولاً
+            error_messages = []
+            validation_failed = False
+            
+            try:
+                error_selectors = [
+                    '.ant-form-item-explain-error',
+                    '.ant-alert-error',
+                    '.alert-danger',
+                    '.error',
+                    '.text-danger',
+                    '[class*="error"]',
+                    '[class*="Error"]',
+                ]
+                
+                for sel in error_selectors:
+                    if self.page.locator(sel).count() > 0:
+                        messages = self.page.locator(sel).all()
+                        for msg in messages:
+                            try:
+                                text = msg.inner_text().strip()
+                                if text and len(text) > 2:
+                                    error_messages.append(text)
+                                    if 'validation' in text.lower() or 'البريد' in text or 'email' in text.lower():
+                                        validation_failed = True
+                            except:
+                                pass
+            except:
+                pass
+            
+            if error_messages:
+                self.log_message(f"⚠️ رسائل خطأ: {', '.join(error_messages)}")
+                
+                # إرسال على Telegram
+                error_text = "❌ فشل تسجيل الدخول\n\n"
+                error_text += "رسائل الخطأ:\n"
+                for err in error_messages:
+                    error_text += f"• {err}\n"
+                
+                self.send_telegram_alert(error_text)
+                
+                # لو المشكلة في البريد الإلكتروني
+                if validation_failed:
+                    self.log_message("❌ بيانات الدخول غير صحيحة!")
+                    self.log_message("💡 تحقق من:")
+                    self.log_message("   1. البريد الإلكتروني صحيح")
+                    self.log_message("   2. كلمة المرور صحيحة")
+                    self.log_message("   3. الحساب مُفعّل")
+            
+            # انتظار إضافي
+            time.sleep(3)
             
             # التحقق من نجاح تسجيل الدخول
             current_url = self.page.url
@@ -350,29 +418,30 @@ class StudyInEgyptMonitor:
             if "login" not in current_url.lower():
                 self.log_message("✅✅✅ تم تسجيل الدخول بنجاح! ✅✅✅")
                 self.status["state"] = "logged_in"
+                self.send_telegram_alert("✅ تم تسجيل الدخول بنجاح!")
                 return True
             else:
-                # التحقق من وجود رسائل خطأ
-                error_messages = []
-                try:
-                    error_selectors = [
-                        '.alert-danger',
-                        '.error',
-                        '.text-danger',
-                        '[class*="error"]'
-                    ]
-                    for sel in error_selectors:
-                        if self.page.locator(sel).count() > 0:
-                            msg = self.page.locator(sel).first.inner_text()
-                            if msg:
-                                error_messages.append(msg)
-                except:
-                    pass
+                # التحقق من وجود رسائل خطأ لم نكتشفها
+                if not error_messages:
+                    try:
+                        error_selectors = [
+                            '.ant-form-item-explain-error',
+                            '.ant-alert-danger',
+                            '.alert-danger',
+                            '.error-message',
+                        ]
+                        for sel in error_selectors:
+                            if self.page.locator(sel).count() > 0:
+                                msg = self.page.locator(sel).first.inner_text()
+                                if msg:
+                                    error_messages.append(msg)
+                    except:
+                        pass
                 
                 if error_messages:
                     self.log_message(f"⚠️ رسائل خطأ: {', '.join(error_messages)}")
                 else:
-                    self.log_message("⚠️ ما زلنا في صفحة تسجيل الدخول - قد تكون بيانات خاطئة")
+                    self.log_message("⚠️ ما زلنا في صفحة تسجيل الدخول")
                 
                 self.status["state"] = "login_failed"
                 return False
