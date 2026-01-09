@@ -7,18 +7,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-ENV PORT=10000
-EXPOSE 10000
+ENV PORT=8080
+EXPOSE 8080
 
 CMD ["python", "monitor.py"]
-```
-
-**أنشئ ملف `.dockerignore`:**
-```
-__pycache__
-*.pyc
-*.log
-*.png
-.git
-.env
-venv/
