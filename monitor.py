@@ -98,15 +98,66 @@ class StudyInEgyptMonitor:
                     '--disable-setuid-sandbox',
                     '--disable-dev-shm-usage',
                     '--disable-gpu',
+                    '--disable-blink-features=AutomationControlled',  # إخفاء automation
+                    '--disable-features=IsolateOrigins,site-per-process',
                 ]
             )
             
             self.log_message("إنشاء صفحة جديدة...")
             context = self.browser.new_context(
                 viewport={'width': 1920, 'height': 1080},
-                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+                locale='ar-EG',
+                timezone_id='Africa/Cairo',
+                # إضافة permissions
+                permissions=['geolocation'],
+                geolocation={'latitude': 30.0444, 'longitude': 31.2357},  # Cairo
+                # إضافة extra headers
+                extra_http_headers={
+                    'Accept-Language': 'ar-EG,ar;q=0.9,en-US;q=0.8,en;q=0.7',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                    'Accept-Encoding': 'gzip, deflate, br',
+                    'DNT': '1',
+                    'Connection': 'keep-alive',
+                    'Upgrade-Insecure-Requests': '1',
+                }
             )
+            
             self.page = context.new_page()
+            
+            # إخفاء webdriver و automation flags
+            self.page.add_init_script("""
+                // إخفاء webdriver
+                Object.defineProperty(navigator, 'webdriver', {
+                    get: () => false
+                });
+                
+                // إخفاء automation
+                delete navigator.__proto__.webdriver;
+                
+                // تعديل permissions
+                const originalQuery = window.navigator.permissions.query;
+                window.navigator.permissions.query = (parameters) => (
+                    parameters.name === 'notifications' ?
+                        Promise.resolve({ state: Notification.permission }) :
+                        originalQuery(parameters)
+                );
+                
+                // إضافة plugins
+                Object.defineProperty(navigator, 'plugins', {
+                    get: () => [1, 2, 3, 4, 5]
+                });
+                
+                // إضافة languages
+                Object.defineProperty(navigator, 'languages', {
+                    get: () => ['ar-EG', 'ar', 'en-US', 'en']
+                });
+                
+                // Chrome runtime
+                window.chrome = {
+                    runtime: {}
+                };
+            """)
             
             # زيادة timeout للصفحات البطيئة
             self.page.set_default_timeout(90000)  # 90 ثانية
@@ -284,11 +335,21 @@ class StudyInEgyptMonitor:
             
             # إدخال البيانات
             self.log_message("إدخال اسم المستخدم...")
-            # مسح الحقل أولاً
-            self.page.fill(username_field, '')
+            
+            # النقر على الحقل أولاً (simulate human behavior)
+            self.page.click(username_field)
             time.sleep(0.5)
-            # كتابة البيانات ببطء (محاكاة الكتابة البشرية)
-            self.page.type(username_field, self.username, delay=100)
+            
+            # مسح الحقل
+            self.page.fill(username_field, '')
+            time.sleep(0.3)
+            
+            # كتابة البيانات ببطء (محاكاة الإنسان)
+            # delay عشوائي بين 80-150ms
+            import random
+            for char in self.username:
+                self.page.type(username_field, char, delay=random.randint(80, 150))
+            
             time.sleep(1)
             
             # التأكد من إدخال البيانات
@@ -296,10 +357,20 @@ class StudyInEgyptMonitor:
             self.log_message(f"✅ القيمة المدخلة: {current_value[:3]}***")
             
             self.log_message("إدخال كلمة المرور...")
-            self.page.fill(password_field, '')
+            
+            # النقر على الحقل
+            self.page.click(password_field)
             time.sleep(0.5)
-            self.page.type(password_field, self.password, delay=100)
-            time.sleep(1)
+            
+            # مسح الحقل
+            self.page.fill(password_field, '')
+            time.sleep(0.3)
+            
+            # كتابة كلمة المرور
+            for char in self.password:
+                self.page.type(password_field, char, delay=random.randint(80, 150))
+            
+            time.sleep(1.5)
             
             # البحث عن زر تسجيل الدخول والضغط عليه
             self.log_message("البحث عن زر تسجيل الدخول...")
@@ -326,7 +397,18 @@ class StudyInEgyptMonitor:
                         # التأكد من أن الزر مرئي وقابل للضغط
                         self.page.wait_for_selector(selector, state='visible', timeout=5000)
                         
-                        # محاولة الضغط مع الانتظار
+                        # تحريك الماوس للزر (simulate human)
+                        button = self.page.locator(selector).first
+                        box = button.bounding_box()
+                        if box:
+                            # تحريك الماوس لمنتصف الزر
+                            self.page.mouse.move(
+                                box['x'] + box['width'] / 2,
+                                box['y'] + box['height'] / 2
+                            )
+                            time.sleep(0.3)
+                        
+                        # الضغط
                         self.page.click(selector, timeout=5000, force=False)
                         clicked = True
                         self.log_message(f"  ✅ تم الضغط على الزر")
