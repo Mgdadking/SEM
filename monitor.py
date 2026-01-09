@@ -126,10 +126,18 @@ class StudyInEgyptMonitor:
             self.log_message("=" * 50)
             
             self.log_message(f"فتح صفحة تسجيل الدخول: {self.base_url}/login")
-            self.page.goto(f"{self.base_url}/login", wait_until="domcontentloaded", timeout=60000)
+            self.page.goto(f"{self.base_url}/login", wait_until="networkidle", timeout=90000)
             
-            self.log_message("⏳ انتظار تحميل الصفحة بالكامل...")
-            time.sleep(5)
+            self.log_message("⏳ انتظار تحميل React App...")
+            # انتظار اختفاء شاشة التحميل إن وجدت
+            try:
+                self.page.wait_for_selector('.ant-spin', state='hidden', timeout=10000)
+                self.log_message("✅ اختفى loader")
+            except:
+                self.log_message("⚠️ مافيش loader أو خلص")
+            
+            # انتظار إضافي للـ React
+            time.sleep(8)
             
             # أخذ لقطة شاشة للتشخيص
             try:
@@ -143,12 +151,20 @@ class StudyInEgyptMonitor:
             # محاولات متعددة للعثور على حقول الإدخال
             username_selectors = [
                 'input[name="username"]',
+                'input[name="email"]',
                 'input[type="text"]',
+                'input[type="email"]',
                 'input[placeholder*="اسم"]',
                 'input[placeholder*="username"]',
+                'input[placeholder*="email"]',
+                'input[placeholder*="البريد"]',
                 'input[id*="username"]',
+                'input[id*="email"]',
                 '#username',
+                '#email',
+                'input.ant-input:first-of-type',
                 'input.form-control:first-of-type',
+                '.ant-form-item:first-child input',
             ]
             
             password_selectors = [
@@ -156,8 +172,12 @@ class StudyInEgyptMonitor:
                 'input[type="password"]',
                 'input[placeholder*="كلمة"]',
                 'input[placeholder*="password"]',
+                'input[placeholder*="Password"]',
+                'input[placeholder*="المرور"]',
                 'input[id*="password"]',
                 '#password',
+                '.ant-form-item:nth-child(2) input',
+                'input[type="password"].ant-input',
             ]
             
             username_field = None
@@ -165,6 +185,16 @@ class StudyInEgyptMonitor:
             
             # البحث عن حقل اسم المستخدم
             self.log_message("البحث عن حقل اسم المستخدم...")
+            
+            # أولاً: انتظار ظهور أي input
+            try:
+                self.log_message("انتظار ظهور حقول الإدخال...")
+                self.page.wait_for_selector('input', timeout=15000)
+                self.log_message("✅ ظهرت حقول الإدخال")
+                time.sleep(2)
+            except Exception as e:
+                self.log_message(f"⚠️ خطأ في انتظار الحقول: {e}")
+            
             for selector in username_selectors:
                 try:
                     self.log_message(f"  محاولة: {selector}")
@@ -178,12 +208,59 @@ class StudyInEgyptMonitor:
             if not username_field:
                 self.log_message("❌ لم أجد حقل اسم المستخدم!")
                 
+                # طباعة جميع الـ inputs الموجودة
+                try:
+                    all_inputs = self.page.locator('input').all()
+                    self.log_message(f"عدد الـ inputs الموجودة: {len(all_inputs)}")
+                    
+                    for i, inp in enumerate(all_inputs[:5]):  # أول 5 فقط
+                        try:
+                            inp_type = inp.get_attribute('type') or 'none'
+                            inp_name = inp.get_attribute('name') or 'none'
+                            inp_id = inp.get_attribute('id') or 'none'
+                            inp_class = inp.get_attribute('class') or 'none'
+                            inp_placeholder = inp.get_attribute('placeholder') or 'none'
+                            
+                            self.log_message(f"Input {i+1}:")
+                            self.log_message(f"  type={inp_type}")
+                            self.log_message(f"  name={inp_name}")
+                            self.log_message(f"  id={inp_id}")
+                            self.log_message(f"  class={inp_class}")
+                            self.log_message(f"  placeholder={inp_placeholder}")
+                        except:
+                            pass
+                except Exception as e:
+                    self.log_message(f"خطأ في قراءة الـ inputs: {e}")
+                
                 # طباعة HTML للتشخيص
                 try:
                     content = self.page.content()
-                    self.log_message(f"محتوى الصفحة (أول 500 حرف): {content[:500]}")
-                except:
-                    pass
+                    self.log_message("=" * 60)
+                    self.log_message("محتوى صفحة تسجيل الدخول:")
+                    self.log_message("=" * 60)
+                    # طباعة أول 2000 حرف بدل 500
+                    self.log_message(content[:2000])
+                    self.log_message("=" * 60)
+                    
+                    # إرسال HTML كملف نصي على Telegram
+                    if self.telegram_token and self.telegram_chat_id:
+                        try:
+                            with open("page_content.html", "w", encoding="utf-8") as f:
+                                f.write(content)
+                            
+                            url = f"https://api.telegram.org/bot{self.telegram_token}/sendDocument"
+                            with open("page_content.html", "rb") as doc:
+                                files = {'document': doc}
+                                data = {
+                                    'chat_id': self.telegram_chat_id,
+                                    'caption': '📄 محتوى صفحة تسجيل الدخول'
+                                }
+                                requests.post(url, data=data, files=files, timeout=30)
+                        except Exception as e:
+                            self.log_message(f"خطأ في إرسال HTML: {e}")
+                            
+                except Exception as e:
+                    self.log_message(f"خطأ في قراءة المحتوى: {e}")
                 
                 self.status["state"] = "login_failed"
                 return False
