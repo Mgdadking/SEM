@@ -1,6 +1,6 @@
 """
-نظام مراقبة منصة ادرس في مصر - نسخة Playwright
-أسرع وأكثر استقراراً للعمل على Render
+نظام مراقبة منصة ادرس في مصر - نسخة Playwright محسّنة
+أسرع وأكثر استقراراً للعمل على Clever Cloud
 """
 
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
@@ -54,6 +54,24 @@ class StudyInEgyptMonitor:
         except Exception as e:
             self.log_message(f"خطأ في إرسال التنبيه: {e}")
     
+    def send_telegram_photo(self, photo_path, caption=""):
+        """إرسال صورة عبر التليجرام"""
+        if not self.telegram_token or not self.telegram_chat_id:
+            return
+        
+        try:
+            url = f"https://api.telegram.org/bot{self.telegram_token}/sendPhoto"
+            with open(photo_path, 'rb') as photo:
+                files = {'photo': photo}
+                data = {
+                    'chat_id': self.telegram_chat_id,
+                    'caption': caption
+                }
+                response = requests.post(url, data=data, files=files, timeout=30)
+                return response.json()
+        except Exception as e:
+            self.log_message(f"خطأ في إرسال الصورة: {e}")
+    
     def log_message(self, message):
         """تسجيل رسالة مع الوقت"""
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -91,7 +109,7 @@ class StudyInEgyptMonitor:
             self.page = context.new_page()
             
             # زيادة timeout للصفحات البطيئة
-            self.page.set_default_timeout(60000)  # 60 ثانية
+            self.page.set_default_timeout(90000)  # 90 ثانية
             
             self.log_message("✅ تم تهيئة المتصفح بنجاح")
             return True
@@ -108,72 +126,176 @@ class StudyInEgyptMonitor:
             self.log_message("=" * 50)
             
             self.log_message(f"فتح صفحة تسجيل الدخول: {self.base_url}/login")
-            self.page.goto(f"{self.base_url}/login", wait_until="networkidle")
+            self.page.goto(f"{self.base_url}/login", wait_until="domcontentloaded", timeout=60000)
             
-            self.log_message("⏳ انتظار تحميل الصفحة...")
-            time.sleep(3)
+            self.log_message("⏳ انتظار تحميل الصفحة بالكامل...")
+            time.sleep(5)
             
-            # انتظار ظهور حقول الإدخال
+            # أخذ لقطة شاشة للتشخيص
+            try:
+                screenshot_path = "login_page.png"
+                self.page.screenshot(path=screenshot_path)
+                self.log_message("📸 تم حفظ لقطة شاشة للصفحة: login_page.png")
+                self.send_telegram_photo(screenshot_path, "📸 صفحة تسجيل الدخول")
+            except Exception as e:
+                self.log_message(f"خطأ في لقطة الشاشة: {e}")
+            
+            # محاولات متعددة للعثور على حقول الإدخال
+            username_selectors = [
+                'input[name="username"]',
+                'input[type="text"]',
+                'input[placeholder*="اسم"]',
+                'input[placeholder*="username"]',
+                'input[id*="username"]',
+                '#username',
+                'input.form-control:first-of-type',
+            ]
+            
+            password_selectors = [
+                'input[name="password"]',
+                'input[type="password"]',
+                'input[placeholder*="كلمة"]',
+                'input[placeholder*="password"]',
+                'input[id*="password"]',
+                '#password',
+            ]
+            
+            username_field = None
+            password_field = None
+            
+            # البحث عن حقل اسم المستخدم
             self.log_message("البحث عن حقل اسم المستخدم...")
-            self.page.wait_for_selector('input[name="username"]', timeout=30000)
+            for selector in username_selectors:
+                try:
+                    self.log_message(f"  محاولة: {selector}")
+                    if self.page.locator(selector).count() > 0:
+                        username_field = selector
+                        self.log_message(f"  ✅ وجدت الحقل: {selector}")
+                        break
+                except:
+                    continue
             
-            self.log_message("✅ وجدت حقول الإدخال")
+            if not username_field:
+                self.log_message("❌ لم أجد حقل اسم المستخدم!")
+                
+                # طباعة HTML للتشخيص
+                try:
+                    content = self.page.content()
+                    self.log_message(f"محتوى الصفحة (أول 500 حرف): {content[:500]}")
+                except:
+                    pass
+                
+                self.status["state"] = "login_failed"
+                return False
+            
+            # البحث عن حقل كلمة المرور
+            self.log_message("البحث عن حقل كلمة المرور...")
+            for selector in password_selectors:
+                try:
+                    self.log_message(f"  محاولة: {selector}")
+                    if self.page.locator(selector).count() > 0:
+                        password_field = selector
+                        self.log_message(f"  ✅ وجدت الحقل: {selector}")
+                        break
+                except:
+                    continue
+            
+            if not password_field:
+                self.log_message("❌ لم أجد حقل كلمة المرور!")
+                self.status["state"] = "login_failed"
+                return False
             
             # إدخال البيانات
             self.log_message("إدخال اسم المستخدم...")
-            self.page.fill('input[name="username"]', self.username)
+            self.page.fill(username_field, self.username)
             time.sleep(1)
             
             self.log_message("إدخال كلمة المرور...")
-            self.page.fill('input[name="password"]', self.password)
+            self.page.fill(password_field, self.password)
             time.sleep(1)
             
             # البحث عن زر تسجيل الدخول والضغط عليه
             self.log_message("البحث عن زر تسجيل الدخول...")
             
-            # محاولات متعددة للعثور على الزر
             button_selectors = [
                 'button:has-text("تسجيل الدخول")',
+                'button:has-text("دخول")',
+                'button:has-text("Login")',
                 'button[type="submit"]',
                 'button:has(span:text("تسجيل الدخول"))',
+                'button:has(span:text("دخول"))',
+                'input[type="submit"]',
+                'button.btn-primary',
+                'button.submit',
             ]
             
             clicked = False
             for selector in button_selectors:
                 try:
-                    self.log_message(f"محاولة: {selector}")
-                    self.page.click(selector, timeout=5000)
-                    clicked = True
-                    self.log_message(f"✅ تم الضغط على الزر بنجاح")
-                    break
-                except:
+                    self.log_message(f"  محاولة: {selector}")
+                    if self.page.locator(selector).count() > 0:
+                        self.page.click(selector, timeout=5000)
+                        clicked = True
+                        self.log_message(f"  ✅ تم الضغط على الزر")
+                        break
+                except Exception as e:
+                    self.log_message(f"  ⚠️ فشلت: {e}")
                     continue
             
             if not clicked:
-                self.log_message("❌ لم أجد زر تسجيل الدخول")
-                return False
+                # محاولة أخيرة: الضغط على Enter
+                self.log_message("محاولة الضغط على Enter...")
+                try:
+                    self.page.keyboard.press("Enter")
+                    clicked = True
+                    self.log_message("✅ تم الضغط على Enter")
+                except:
+                    self.log_message("❌ لم أجد زر تسجيل الدخول")
+                    return False
             
             # انتظار اكتمال تسجيل الدخول
             self.log_message("⏳ انتظار اكتمال تسجيل الدخول...")
-            time.sleep(5)
+            time.sleep(8)
             
             # التحقق من نجاح تسجيل الدخول
             current_url = self.page.url
             self.log_message(f"الصفحة الحالية: {current_url}")
+            
+            # أخذ لقطة شاشة بعد المحاولة
+            try:
+                screenshot_path = "after_login.png"
+                self.page.screenshot(path=screenshot_path)
+                self.log_message("📸 لقطة شاشة بعد تسجيل الدخول: after_login.png")
+                self.send_telegram_photo(screenshot_path, "📸 بعد محاولة تسجيل الدخول")
+            except Exception as e:
+                self.log_message(f"خطأ في لقطة الشاشة: {e}")
             
             if "login" not in current_url.lower():
                 self.log_message("✅✅✅ تم تسجيل الدخول بنجاح! ✅✅✅")
                 self.status["state"] = "logged_in"
                 return True
             else:
-                self.log_message("⚠️ ما زلنا في صفحة تسجيل الدخول - قد تكون بيانات خاطئة")
-                
-                # محاولة أخذ لقطة شاشة
+                # التحقق من وجود رسائل خطأ
+                error_messages = []
                 try:
-                    self.page.screenshot(path="login_failed.png")
-                    self.log_message("📸 تم حفظ لقطة شاشة: login_failed.png")
+                    error_selectors = [
+                        '.alert-danger',
+                        '.error',
+                        '.text-danger',
+                        '[class*="error"]'
+                    ]
+                    for sel in error_selectors:
+                        if self.page.locator(sel).count() > 0:
+                            msg = self.page.locator(sel).first.inner_text()
+                            if msg:
+                                error_messages.append(msg)
                 except:
                     pass
+                
+                if error_messages:
+                    self.log_message(f"⚠️ رسائل خطأ: {', '.join(error_messages)}")
+                else:
+                    self.log_message("⚠️ ما زلنا في صفحة تسجيل الدخول - قد تكون بيانات خاطئة")
                 
                 self.status["state"] = "login_failed"
                 return False
@@ -182,10 +304,12 @@ class StudyInEgyptMonitor:
             self.log_message(f"❌ خطأ في تسجيل الدخول: {e}")
             
             try:
-                self.page.screenshot(path="login_error.png")
+                screenshot_path = "login_error.png"
+                self.page.screenshot(path=screenshot_path)
                 self.log_message("📸 تم حفظ لقطة شاشة: login_error.png")
-            except:
-                pass
+                self.send_telegram_photo(screenshot_path, f"❌ خطأ في تسجيل الدخول: {e}")
+            except Exception as screenshot_error:
+                self.log_message(f"خطأ في لقطة الشاشة: {screenshot_error}")
             
             self.status["state"] = "login_failed"
             return False
@@ -194,8 +318,17 @@ class StudyInEgyptMonitor:
         """فحص التخصصات المتاحة"""
         try:
             self.log_message(f"🔍 فتح صفحة التقديم...")
-            self.page.goto(request_url, wait_until="networkidle")
-            time.sleep(3)
+            self.page.goto(request_url, wait_until="domcontentloaded", timeout=60000)
+            time.sleep(5)
+            
+            # أخذ لقطة شاشة
+            try:
+                screenshot_path = "request_page.png"
+                self.page.screenshot(path=screenshot_path)
+                self.log_message("📸 لقطة شاشة لصفحة التقديم: request_page.png")
+                self.send_telegram_photo(screenshot_path, "📋 صفحة التقديم")
+            except Exception as e:
+                self.log_message(f"خطأ في لقطة الشاشة: {e}")
             
             self.log_message("البحث عن القائمة المنسدلة...")
             
@@ -203,35 +336,86 @@ class StudyInEgyptMonitor:
             
             try:
                 # البحث عن react-select control
+                select_selectors = [
+                    'div[class*="react-select__control"]',
+                    'div[class*="select__control"]',
+                    '[class*="select-control"]',
+                    'select',
+                    '[role="combobox"]',
+                ]
+                
+                select_found = None
+                for selector in select_selectors:
+                    try:
+                        if self.page.locator(selector).count() > 0:
+                            select_found = selector
+                            self.log_message(f"✅ وجدت القائمة: {selector}")
+                            break
+                    except:
+                        continue
+                
+                if not select_found:
+                    self.log_message("⚠️ لم أجد القائمة المنسدلة")
+                    return False
+                
                 self.log_message("محاولة فتح القائمة المنسدلة...")
-                self.page.click('div[class*="react-select__control"]', timeout=10000)
-                time.sleep(2)
+                self.page.click(select_found, timeout=10000)
+                time.sleep(3)
                 
                 # الحصول على جميع الخيارات
-                options = self.page.query_selector_all('div[class*="react-select__option"]')
-                self.log_message(f"✅ وجدت {len(options)} خيار")
+                option_selectors = [
+                    'div[class*="react-select__option"]',
+                    'div[class*="select__option"]',
+                    '[role="option"]',
+                    'option',
+                ]
                 
-                for option in options:
-                    text = option.inner_text().strip()
-                    if text and len(text) > 3:
-                        current_programs.add(text)
-                        self.log_message(f"  📋 {text}")
+                options = None
+                for selector in option_selectors:
+                    try:
+                        if self.page.locator(selector).count() > 0:
+                            options = self.page.locator(selector).all()
+                            self.log_message(f"✅ وجدت الخيارات: {selector}")
+                            break
+                    except:
+                        continue
                 
-                # إغلاق القائمة
-                self.page.keyboard.press("Escape")
-                time.sleep(1)
+                if options and len(options) > 0:
+                    self.log_message(f"✅ وجدت {len(options)} خيار")
+                    
+                    for option in options:
+                        try:
+                            text = option.inner_text().strip()
+                            if text and len(text) > 3:
+                                current_programs.add(text)
+                                self.log_message(f"  📋 {text}")
+                        except:
+                            continue
+                    
+                    # إغلاق القائمة
+                    self.page.keyboard.press("Escape")
+                    time.sleep(1)
+                else:
+                    self.log_message("⚠️ لم أجد خيارات")
                 
             except Exception as e:
                 self.log_message(f"⚠️ خطأ في فتح القائمة: {e}")
                 
                 # محاولة الحصول على القيمة الحالية
                 try:
-                    current_value = self.page.query_selector('div[class*="react-select__single-value"]')
-                    if current_value:
-                        text = current_value.inner_text().strip()
-                        if text:
-                            current_programs.add(text)
-                            self.log_message(f"القيمة الحالية: {text}")
+                    value_selectors = [
+                        'div[class*="react-select__single-value"]',
+                        'div[class*="select__value"]',
+                        '[class*="selected-value"]',
+                    ]
+                    
+                    for selector in value_selectors:
+                        if self.page.locator(selector).count() > 0:
+                            text = self.page.locator(selector).first.inner_text().strip()
+                            if text:
+                                current_programs.add(text)
+                                self.log_message(f"القيمة الحالية: {text}")
+                                break
                 except:
                     pass
             
@@ -289,8 +473,9 @@ class StudyInEgyptMonitor:
                                     filename = f"success_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
                                     self.page.screenshot(path=filename)
                                     self.log_message(f"📸 لقطة الشاشة: {filename}")
-                                except:
-                                    pass
+                                    self.send_telegram_photo(filename, f"🎉 نجح! تم اختيار {program}")
+                                except Exception as e:
+                                    self.log_message(f"خطأ في لقطة الشاشة: {e}")
                                 
                                 self.log_message("✅ تم! سأتوقف الآن...")
                                 self.is_running = False
@@ -309,18 +494,38 @@ class StudyInEgyptMonitor:
             self.log_message(f"اختيار: {program_name}")
             
             # فتح القائمة
-            self.page.click('div[class*="react-select__control"]')
-            time.sleep(2)
+            select_selectors = [
+                'div[class*="react-select__control"]',
+                'div[class*="select__control"]',
+            ]
+            
+            for selector in select_selectors:
+                try:
+                    if self.page.locator(selector).count() > 0:
+                        self.page.click(selector)
+                        time.sleep(2)
+                        break
+                except:
+                    continue
             
             # البحث والضغط على الخيار
-            options = self.page.query_selector_all('div[class*="react-select__option"]')
+            option_selectors = [
+                'div[class*="react-select__option"]',
+                'div[class*="select__option"]',
+                '[role="option"]',
+            ]
             
-            for option in options:
-                if program_name in option.inner_text():
-                    option.click()
-                    time.sleep(2)
-                    self.log_message("✅ تم اختيار التخصص")
-                    return True
+            for selector in option_selectors:
+                try:
+                    options = self.page.locator(selector).all()
+                    for option in options:
+                        if program_name in option.inner_text():
+                            option.click()
+                            time.sleep(2)
+                            self.log_message("✅ تم اختيار التخصص")
+                            return True
+                except:
+                    continue
             
             self.log_message("❌ لم أجد الخيار")
             return False
@@ -337,16 +542,20 @@ class StudyInEgyptMonitor:
             button_selectors = [
                 'button:has-text("إستمرار")',
                 'button:has-text("استمرار")',
+                'button:has-text("Continue")',
                 'button:has(span:text("إستمرار"))',
                 'button:has(span:text("استمرار"))',
+                'button.btn-primary',
+                'button[type="submit"]',
             ]
             
             for selector in button_selectors:
                 try:
-                    self.page.click(selector, timeout=5000)
-                    time.sleep(2)
-                    self.log_message("✅ تم الضغط على استمرار")
-                    return True
+                    if self.page.locator(selector).count() > 0:
+                        self.page.click(selector, timeout=5000)
+                        time.sleep(2)
+                        self.log_message("✅ تم الضغط على استمرار")
+                        return True
                 except:
                     continue
             
@@ -372,6 +581,7 @@ class StudyInEgyptMonitor:
         
         if not self.login():
             self.log_message("❌ فشل تسجيل الدخول")
+            self.log_message("💡 تحقق من بيانات الدخول والـ screenshots")
             self.cleanup()
             return
         
@@ -443,6 +653,10 @@ def start_monitor_thread():
     
     if not all([USERNAME, PASSWORD, REQUEST_URL, target_programs]):
         print("❌ خطأ: متغيرات البيئة غير مكتملة!")
+        print(f"USERNAME: {'✓' if USERNAME else '✗'}")
+        print(f"PASSWORD: {'✓' if PASSWORD else '✗'}")
+        print(f"REQUEST_URL: {'✓' if REQUEST_URL else '✗'}")
+        print(f"TARGET_PROGRAMS: {'✓' if target_programs else '✗'}")
         return
     
     monitor = StudyInEgyptMonitor(
@@ -461,7 +675,7 @@ def start_monitor_thread():
 def home():
     return jsonify({
         "status": "running",
-        "service": "Study Egypt Monitor - Playwright",
+        "service": "Study Egypt Monitor - Playwright (Enhanced)",
         "message": "النظام يعمل"
     })
 
