@@ -10,6 +10,7 @@ import threading
 from datetime import datetime
 import requests
 from flask import Flask, jsonify
+import random
 
 # إنشاء Flask app
 app = Flask(__name__)
@@ -177,6 +178,17 @@ class StudyInEgyptMonitor:
             self.log_message("=" * 50)
             
             self.log_message(f"فتح صفحة تسجيل الدخول: {self.base_url}/login")
+            
+            # زيارة الصفحة الرئيسية أولاً (simulate real user)
+            self.log_message("⏳ زيارة الصفحة الرئيسية أولاً...")
+            try:
+                self.page.goto(self.base_url, wait_until="networkidle", timeout=60000)
+                time.sleep(random.randint(2, 4))
+            except:
+                pass
+            
+            # الآن ندخل على صفحة login
+            self.log_message("⏳ الانتقال لصفحة تسجيل الدخول...")
             self.page.goto(f"{self.base_url}/login", wait_until="networkidle", timeout=90000)
             
             self.log_message("⏳ انتظار تحميل React App...")
@@ -188,7 +200,7 @@ class StudyInEgyptMonitor:
                 self.log_message("⚠️ مافيش loader أو خلص")
             
             # انتظار إضافي للـ React
-            time.sleep(8)
+            time.sleep(random.randint(5, 8))
             
             # أخذ لقطة شاشة للتشخيص
             try:
@@ -198,6 +210,28 @@ class StudyInEgyptMonitor:
                 self.send_telegram_photo(screenshot_path, "📸 صفحة تسجيل الدخول")
             except Exception as e:
                 self.log_message(f"خطأ في لقطة الشاشة: {e}")
+            
+            # فحص وجود CAPTCHA
+            self.log_message("🔍 فحص وجود CAPTCHA...")
+            captcha_found = False
+            try:
+                captcha_selectors = [
+                    'iframe[src*="recaptcha"]',
+                    'iframe[src*="captcha"]',
+                    '.g-recaptcha',
+                    '#recaptcha',
+                    '[class*="captcha"]',
+                ]
+                for sel in captcha_selectors:
+                    if self.page.locator(sel).count() > 0:
+                        captcha_found = True
+                        self.log_message(f"⚠️ وجدت CAPTCHA: {sel}")
+                        break
+                
+                if not captcha_found:
+                    self.log_message("✅ لا يوجد CAPTCHA")
+            except:
+                pass
             
             # محاولات متعددة للعثور على حقول الإدخال
             username_selectors = [
@@ -338,39 +372,54 @@ class StudyInEgyptMonitor:
             
             # النقر على الحقل أولاً (simulate human behavior)
             self.page.click(username_field)
-            time.sleep(0.5)
+            time.sleep(random.uniform(0.5, 1.0))
             
-            # مسح الحقل
-            self.page.fill(username_field, '')
-            time.sleep(0.3)
+            # إدخال البيانات بطريقة مختلفة - تجنب fill و type
+            # استخدام evaluate لتجنب كشف automation
+            self.page.evaluate(f"""
+                (selector, value) => {{
+                    const input = document.querySelector(selector);
+                    if (input) {{
+                        input.value = value;
+                        input.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                        input.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                        input.dispatchEvent(new Event('blur', {{ bubbles: true }}));
+                    }}
+                }}
+            """, username_field, self.username)
             
-            # كتابة البيانات ببطء (محاكاة الإنسان)
-            # delay عشوائي بين 80-150ms
-            import random
-            for char in self.username:
-                self.page.type(username_field, char, delay=random.randint(80, 150))
-            
-            time.sleep(1)
+            time.sleep(random.uniform(0.8, 1.5))
             
             # التأكد من إدخال البيانات
             current_value = self.page.input_value(username_field)
             self.log_message(f"✅ القيمة المدخلة: {current_value[:3]}***")
             
+            # حركة ماوس عشوائية (simulate distraction)
+            self.page.mouse.move(random.randint(100, 500), random.randint(100, 500))
+            time.sleep(random.uniform(0.3, 0.7))
+            
             self.log_message("إدخال كلمة المرور...")
             
             # النقر على الحقل
             self.page.click(password_field)
-            time.sleep(0.5)
+            time.sleep(random.uniform(0.5, 1.0))
             
-            # مسح الحقل
-            self.page.fill(password_field, '')
-            time.sleep(0.3)
+            # إدخال كلمة المرور بنفس الطريقة
+            self.page.evaluate(f"""
+                (selector, value) => {{
+                    const input = document.querySelector(selector);
+                    if (input) {{
+                        input.value = value;
+                        input.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                        input.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                        input.dispatchEvent(new Event('blur', {{ bubbles: true }}));
+                    }}
+                }}
+            """, password_field, self.password)
             
-            # كتابة كلمة المرور
-            for char in self.password:
-                self.page.type(password_field, char, delay=random.randint(80, 150))
+            time.sleep(random.uniform(1.0, 2.0))
             
-            time.sleep(1.5)
+            self.log_message("✅ تم إدخال البيانات بنجاح")
             
             # البحث عن زر تسجيل الدخول والضغط عليه
             self.log_message("البحث عن زر تسجيل الدخول...")
@@ -873,19 +922,36 @@ def start_monitor_thread():
     PASSWORD = os.environ.get("STUDY_PASSWORD")
     REQUEST_URL = os.environ.get("REQUEST_URL")
     
-    target_programs = os.environ.get("TARGET_PROGRAMS", "").split(",")
-    target_programs = [p.strip() for p in target_programs if p.strip()]
+    # التخصصات المطلوبة - يمكن تغييرها من متغيرات البيئة
+    target_programs_env = os.environ.get("TARGET_PROGRAMS", "")
+    
+    if target_programs_env:
+        # من متغيرات البيئة
+        target_programs = [p.strip() for p in target_programs_env.split(",") if p.strip()]
+    else:
+        # القيم الافتراضية - التخصصات المطلوبة
+        target_programs = [
+            "طب القاهرة",
+            "طب عين شمس",
+            "طب اسكندرية",
+            "طب الزقازيق",
+        ]
     
     telegram_token = os.environ.get("TELEGRAM_TOKEN")
     telegram_chat_id = os.environ.get("TELEGRAM_CHAT_ID")
     
-    if not all([USERNAME, PASSWORD, REQUEST_URL, target_programs]):
+    if not all([USERNAME, PASSWORD, REQUEST_URL]):
         print("❌ خطأ: متغيرات البيئة غير مكتملة!")
         print(f"USERNAME: {'✓' if USERNAME else '✗'}")
         print(f"PASSWORD: {'✓' if PASSWORD else '✗'}")
         print(f"REQUEST_URL: {'✓' if REQUEST_URL else '✗'}")
-        print(f"TARGET_PROGRAMS: {'✓' if target_programs else '✗'}")
         return
+    
+    if not target_programs:
+        print("❌ خطأ: لا توجد تخصصات محددة!")
+        return
+    
+    print(f"📚 التخصصات المستهدفة: {', '.join(target_programs)}")
     
     monitor = StudyInEgyptMonitor(
         username=USERNAME,
