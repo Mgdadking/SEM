@@ -374,27 +374,40 @@ class StudyInEgyptMonitor:
             self.page.click(username_field)
             time.sleep(random.uniform(0.5, 1.0))
             
-            # إدخال البيانات بطريقة مختلفة - تجنب fill و type
-            # استخدام evaluate لتجنب كشف automation
+            # مسح الحقل أولاً
+            self.page.fill(username_field, '')
+            time.sleep(0.3)
+            
+            # كتابة البيانات حرف حرف ببطء
+            for char in self.username:
+                self.page.type(username_field, char, delay=random.randint(50, 120))
+            
+            time.sleep(random.uniform(0.5, 1.0))
+            
+            # trigger React events
             self.page.evaluate("""
-                ([selector, value]) => {
+                (selector) => {
                     const input = document.querySelector(selector);
                     if (input) {
-                        input.value = value;
-                        input.dispatchEvent(new Event('input', { bubbles: true }));
-                        input.dispatchEvent(new Event('change', { bubbles: true }));
                         input.dispatchEvent(new Event('blur', { bubbles: true }));
                     }
                 }
-            """, [username_field, self.username])
+            """, username_field)
             
-            time.sleep(random.uniform(0.8, 1.5))
+            time.sleep(0.5)
             
             # التأكد من إدخال البيانات
             current_value = self.page.input_value(username_field)
-            self.log_message(f"✅ القيمة المدخلة: {current_value[:3]}***")
+            self.log_message(f"✅ القيمة المدخلة: {current_value[:3]}*** (طول: {len(current_value)})")
             
-            # حركة ماوس عشوائية (simulate distraction)
+            if len(current_value) == 0:
+                self.log_message("⚠️ تحذير: الحقل فارغ! محاولة إعادة الكتابة...")
+                self.page.fill(username_field, self.username)
+                time.sleep(1)
+                current_value = self.page.input_value(username_field)
+                self.log_message(f"بعد المحاولة الثانية: طول = {len(current_value)}")
+            
+            # حركة ماوس عشوائية
             self.page.mouse.move(random.randint(100, 500), random.randint(100, 500))
             time.sleep(random.uniform(0.3, 0.7))
             
@@ -404,20 +417,36 @@ class StudyInEgyptMonitor:
             self.page.click(password_field)
             time.sleep(random.uniform(0.5, 1.0))
             
-            # إدخال كلمة المرور بنفس الطريقة
+            # مسح الحقل
+            self.page.fill(password_field, '')
+            time.sleep(0.3)
+            
+            # كتابة كلمة المرور
+            for char in self.password:
+                self.page.type(password_field, char, delay=random.randint(50, 120))
+            
+            time.sleep(random.uniform(0.5, 1.0))
+            
+            # trigger React events
             self.page.evaluate("""
-                ([selector, value]) => {
+                (selector) => {
                     const input = document.querySelector(selector);
                     if (input) {
-                        input.value = value;
-                        input.dispatchEvent(new Event('input', { bubbles: true }));
-                        input.dispatchEvent(new Event('change', { bubbles: true }));
                         input.dispatchEvent(new Event('blur', { bubbles: true }));
                     }
                 }
-            """, [password_field, self.password])
+            """, password_field)
             
-            time.sleep(random.uniform(1.0, 2.0))
+            time.sleep(0.5)
+            
+            # التحقق من كلمة المرور
+            password_value = self.page.input_value(password_field)
+            self.log_message(f"✅ كلمة المرور: طول = {len(password_value)}")
+            
+            if len(password_value) == 0:
+                self.log_message("⚠️ تحذير: حقل كلمة المرور فارغ! محاولة إعادة الكتابة...")
+                self.page.fill(password_field, self.password)
+                time.sleep(1)
             
             self.log_message("✅ تم إدخال البيانات بنجاح")
             
