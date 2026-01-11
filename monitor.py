@@ -376,17 +376,17 @@ class StudyInEgyptMonitor:
             
             # إدخال البيانات بطريقة مختلفة - تجنب fill و type
             # استخدام evaluate لتجنب كشف automation
-            self.page.evaluate(f"""
-                (selector, value) => {{
+            self.page.evaluate("""
+                ([selector, value]) => {
                     const input = document.querySelector(selector);
-                    if (input) {{
+                    if (input) {
                         input.value = value;
-                        input.dispatchEvent(new Event('input', {{ bubbles: true }}));
-                        input.dispatchEvent(new Event('change', {{ bubbles: true }}));
-                        input.dispatchEvent(new Event('blur', {{ bubbles: true }}));
-                    }}
-                }}
-            """, username_field, self.username)
+                        input.dispatchEvent(new Event('input', { bubbles: true }));
+                        input.dispatchEvent(new Event('change', { bubbles: true }));
+                        input.dispatchEvent(new Event('blur', { bubbles: true }));
+                    }
+                }
+            """, [username_field, self.username])
             
             time.sleep(random.uniform(0.8, 1.5))
             
@@ -405,17 +405,17 @@ class StudyInEgyptMonitor:
             time.sleep(random.uniform(0.5, 1.0))
             
             # إدخال كلمة المرور بنفس الطريقة
-            self.page.evaluate(f"""
-                (selector, value) => {{
+            self.page.evaluate("""
+                ([selector, value]) => {
                     const input = document.querySelector(selector);
-                    if (input) {{
+                    if (input) {
                         input.value = value;
-                        input.dispatchEvent(new Event('input', {{ bubbles: true }}));
-                        input.dispatchEvent(new Event('change', {{ bubbles: true }}));
-                        input.dispatchEvent(new Event('blur', {{ bubbles: true }}));
-                    }}
-                }}
-            """, password_field, self.password)
+                        input.dispatchEvent(new Event('input', { bubbles: true }));
+                        input.dispatchEvent(new Event('change', { bubbles: true }));
+                        input.dispatchEvent(new Event('blur', { bubbles: true }));
+                    }
+                }
+            """, [password_field, self.password])
             
             time.sleep(random.uniform(1.0, 2.0))
             
