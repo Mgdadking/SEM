@@ -1275,111 +1275,82 @@ class StudyInEgyptMonitor:
                 self.log_message("⚠️ لم أجد زر 'إضافة الرغبات' - ربما الرغبات مفتوحة بالفعل")
             
             # الآن البحث عن القائمة المنسدلة
-            self.log_message("🔍 البحث عن القائمة المنسدلة...")
+            self.log_message("🔍 البحث عن قائمة التخصصات...")
             
             current_programs = set()
             
             try:
-                # البحث عن react-select control
-                select_selectors = [
-                    'div[class*="react-select__control"]',
-                    'div[class*="select__control"]',
-                    '[class*="select-control"]',
-                    '[role="combobox"]',
-                    'input[role="combobox"]',
-                ]
+                # البحث عن كل القوائم المنسدلة
+                all_selects = self.page.locator('div[class*="ant-select"]').all()
+                self.log_message(f"وجدت {len(all_selects)} قائمة منسدلة")
                 
-                select_found = None
-                for selector in select_selectors:
+                # نجرب كل قائمة لحد ما نلاقي التخصصات
+                found_programs_dropdown = False
+                
+                for idx, select_elem in enumerate(all_selects):
                     try:
-                        if self.page.locator(selector).count() > 0:
-                            select_found = selector
-                            self.log_message(f"✅ وجدت القائمة: {selector}")
-                            break
-                    except:
+                        self.log_message(f"📋 فحص القائمة رقم {idx + 1}...")
+                        
+                        # الضغط لفتح القائمة
+                        select_elem.click(timeout=3000)
+                        time.sleep(2)
+                        
+                        # الحصول على الخيارات
+                        options = self.page.locator('div[class*="ant-select-item"]').all()
+                        
+                        if len(options) > 0:
+                            first_option_text = options[0].inner_text().strip()
+                            self.log_message(f"  أول خيار: {first_option_text}")
+                            
+                            # فحص إذا كانت دي قائمة اللغات (نتجاهلها)
+                            if first_option_text in ['العربية', 'English', 'Français', 'عربي', 'إنجليزي']:
+                                self.log_message(f"  ⏭️ تخطي - دي قائمة اللغات")
+                                # إغلاق القائمة
+                                self.page.keyboard.press("Escape")
+                                time.sleep(1)
+                                continue
+                            
+                            # لو وصلنا هنا، يبقى دي قائمة التخصصات!
+                            self.log_message(f"✅ وجدت قائمة التخصصات! ({len(options)} خيار)")
+                            
+                            for option in options:
+                                try:
+                                    text = option.inner_text().strip()
+                                    if text and len(text) > 3:
+                                        current_programs.add(text)
+                                        self.log_message(f"  📋 {text}")
+                                except:
+                                    continue
+                            
+                            found_programs_dropdown = True
+                            
+                            # إغلاق القائمة
+                            try:
+                                self.page.keyboard.press("Escape")
+                                time.sleep(1)
+                            except:
+                                pass
+                            
+                            break  # وجدنا اللي عايزينه، نوقف
+                        
+                    except Exception as e:
+                        self.log_message(f"  ⚠️ خطأ في القائمة {idx + 1}: {e}")
                         continue
                 
-                if not select_found:
-                    self.log_message("⚠️ لم أجد القائمة المنسدلة")
-                    # أخذ لقطة شاشة للتشخيص
+                if not found_programs_dropdown:
+                    self.log_message("⚠️ لم أجد قائمة التخصصات!")
+                    
+                    # أخذ screenshot للتشخيص
                     try:
-                        self.page.screenshot(path="no_dropdown.png")
-                        self.send_telegram_photo("no_dropdown.png", "⚠️ لم أجد القائمة")
+                        self.page.screenshot(path="no_programs_dropdown.png")
+                        self.send_telegram_photo("no_programs_dropdown.png", "⚠️ لم أجد قائمة التخصصات")
                     except:
                         pass
+                    
                     return False
                 
-                self.log_message("محاولة فتح القائمة المنسدلة...")
-                
-                # محاولة الضغط على parent container بدل الـ input
-                try:
-                    # البحث عن الـ container الخارجي
-                    container = self.page.locator('div[class*="ant-select"]').first
-                    if container:
-                        container.click(timeout=5000)
-                        time.sleep(2)
-                    else:
-                        self.page.click(select_found, timeout=5000)
-                        time.sleep(2)
-                except Exception as e:
-                    self.log_message(f"محاولة بديلة للضغط: {e}")
-                    # محاولة focus ثم arrow down
-                    try:
-                        self.page.focus(select_found)
-                        time.sleep(0.5)
-                        self.page.keyboard.press("ArrowDown")
-                        time.sleep(2)
-                    except:
-                        pass
-                
-                # الحصول على جميع الخيارات
-                option_selectors = [
-                    'div[class*="react-select__option"]',
-                    'div[class*="select__option"]',
-                    'div[class*="ant-select-item"]',
-                    '[role="option"]',
-                    'option',
-                ]
-                
-                options = None
-                for selector in option_selectors:
-                    try:
-                        count = self.page.locator(selector).count()
-                        if count > 0:
-                            options = self.page.locator(selector).all()
-                            self.log_message(f"✅ وجدت الخيارات: {selector} ({count} خيار)")
-                            break
-                    except:
-                        continue
-                
-                if options and len(options) > 0:
-                    self.log_message(f"✅ وجدت {len(options)} خيار")
-                    
-                    for option in options:
-                        try:
-                            text = option.inner_text().strip()
-                            if text and len(text) > 3:
-                                current_programs.add(text)
-                                self.log_message(f"  📋 {text}")
-                        except:
-                            continue
-                    
-                    # إغلاق القائمة
-                    try:
-                        self.page.keyboard.press("Escape")
-                        time.sleep(1)
-                    except:
-                        pass
-                else:
-                    self.log_message("⚠️ لم أجد خيارات - محاولة أخذ screenshot")
-                    try:
-                        self.page.screenshot(path="no_options.png")
-                        self.send_telegram_photo("no_options.png", "⚠️ لم أجد خيارات")
-                    except:
-                        pass
-                
             except Exception as e:
-                self.log_message(f"⚠️ خطأ في فتح القائمة: {e}")
+                self.log_message(f"⚠️ خطأ في البحث عن القوائم: {e}")
                 
                 # أخذ screenshot للتشخيص
                 try:
@@ -1387,6 +1358,8 @@ class StudyInEgyptMonitor:
                     self.send_telegram_photo("dropdown_error.png", f"❌ خطأ: {e}")
                 except:
                     pass
+                
+                return False
             
             self.log_message(f"📊 إجمالي التخصصات: {len(current_programs)}")
             
