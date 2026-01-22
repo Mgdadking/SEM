@@ -1506,6 +1506,7 @@ def start_monitor_thread():
     USERNAME = os.environ.get("STUDY_USERNAME")
     PASSWORD = os.environ.get("STUDY_PASSWORD")
     REQUEST_URL = os.environ.get("REQUEST_URL")
+    COOKIES_BASE64 = os.environ.get("COOKIES_BASE64")
     
     # التخصصات المطلوبة - يمكن تغييرها من متغيرات البيئة
     target_programs_env = os.environ.get("TARGET_PROGRAMS", "")
@@ -1525,12 +1526,29 @@ def start_monitor_thread():
     telegram_token = os.environ.get("TELEGRAM_TOKEN")
     telegram_chat_id = os.environ.get("TELEGRAM_CHAT_ID")
     
-    if not all([USERNAME, PASSWORD, REQUEST_URL]):
-        print("❌ خطأ: متغيرات البيئة غير مكتملة!")
-        print(f"USERNAME: {'✓' if USERNAME else '✗'}")
-        print(f"PASSWORD: {'✓' if PASSWORD else '✗'}")
-        print(f"REQUEST_URL: {'✓' if REQUEST_URL else '✗'}")
+    # التحقق من المتغيرات المطلوبة
+    if not REQUEST_URL:
+        print("❌ خطأ: REQUEST_URL مطلوب!")
         return
+    
+    # لو مافيش cookies، لازم يكون فيه username و password
+    if not COOKIES_BASE64:
+        import os.path
+        if not os.path.exists("cookies.json"):
+            if not all([USERNAME, PASSWORD]):
+                print("❌ خطأ: لازم COOKIES_BASE64 أو (USERNAME + PASSWORD)!")
+                print(f"USERNAME: {'✓' if USERNAME else '✗'}")
+                print(f"PASSWORD: {'✓' if PASSWORD else '✗'}")
+                print(f"REQUEST_URL: {'✓' if REQUEST_URL else '✗'}")
+                print(f"COOKIES_BASE64: ✗")
+                print(f"cookies.json: ✗")
+                return
+            else:
+                print("ℹ️ سيتم استخدام USERNAME + PASSWORD")
+        else:
+            print("ℹ️ سيتم استخدام cookies.json")
+    else:
+        print("ℹ️ سيتم استخدام COOKIES_BASE64")
     
     if not target_programs:
         print("❌ خطأ: لا توجد تخصصات محددة!")
@@ -1539,8 +1557,8 @@ def start_monitor_thread():
     print(f"📚 التخصصات المستهدفة: {', '.join(target_programs)}")
     
     monitor = StudyInEgyptMonitor(
-        username=USERNAME,
-        password=PASSWORD,
+        username=USERNAME or "",
+        password=PASSWORD or "",
         target_programs=target_programs,
         telegram_token=telegram_token,
         telegram_chat_id=telegram_chat_id
