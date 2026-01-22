@@ -37,7 +37,19 @@ class StudyInEgyptMonitor:
         self.page = None
         self.status = {"state": "initialized", "last_check": None, "checks_count": 0}
         self.base_url = "https://admission.study-in-egypt.gov.eg"
+    
+    def log_message(self, message):
+        """تسجيل رسالة مع الوقت"""
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        log = f"[{timestamp}] {message}"
+        print(log, flush=True)
         
+        try:
+            with open("monitor_log.txt", "a", encoding="utf-8") as f:
+                f.write(log + "\n")
+        except:
+            pass
+    
     def send_telegram_alert(self, message):
         """إرسال تنبيه عبر التليجرام"""
         if not self.telegram_token or not self.telegram_chat_id:
