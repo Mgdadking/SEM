@@ -1248,6 +1248,229 @@ class StudyInEgyptMonitor:
             except Exception as e:
                 self.log_message(f"خطأ في لقطة الشاشة: {e}")
             
+            # البحث عن زر "إضافة الرغبات"
+            self.log_message("🔍 البحث عن زر 'إضافة الرغبات'...")
+            
+            button_selectors = [
+                'button:has-text("إضافة الرغبات")',
+                'button:has(text="إضافة الرغبات")',
+                'button[class*="button_custom-button"]',
+            ]
+            
+            add_button_found = False
+            for selector in button_selectors:
+                try:
+                    if self.page.locator(selector).count() > 0:
+                        self.log_message(f"✅ وجدت زر 'إضافة الرغبات': {selector}")
+                        self.page.click(selector, timeout=5000)
+                        add_button_found = True
+                        self.log_message("✅ تم الضغط على زر 'إضافة الرغبات'")
+                        time.sleep(3)
+                        break
+                except Exception as e:
+                    self.log_message(f"⚠️ فشل مع {selector}: {e}")
+                    continue
+            
+            if not add_button_found:
+                self.log_message("⚠️ لم أجد زر 'إضافة الرغبات' - ربما الرغبات مفتوحة بالفعل")
+            
+            # الآن البحث عن القائمة المنسدلة
+            self.log_message("🔍 البحث عن القائمة المنسدلة...")
+            
+            current_programs = set()
+            
+            try:
+                # البحث عن react-select control
+                select_selectors = [
+                    'div[class*="react-select__control"]',
+                    'div[class*="select__control"]',
+                    '[class*="select-control"]',
+                    '[role="combobox"]',
+                    'input[role="combobox"]',
+                ]
+                
+                select_found = None
+                for selector in select_selectors:
+                    try:
+                        if self.page.locator(selector).count() > 0:
+                            select_found = selector
+                            self.log_message(f"✅ وجدت القائمة: {selector}")
+                            break
+                    except:
+                        continue
+                
+                if not select_found:
+                    self.log_message("⚠️ لم أجد القائمة المنسدلة")
+                    # أخذ لقطة شاشة للتشخيص
+                    try:
+                        self.page.screenshot(path="no_dropdown.png")
+                        self.send_telegram_photo("no_dropdown.png", "⚠️ لم أجد القائمة")
+                    except:
+                        pass
+                    return False
+                
+                self.log_message("محاولة فتح القائمة المنسدلة...")
+                
+                # محاولة الضغط على parent container بدل الـ input
+                try:
+                    # البحث عن الـ container الخارجي
+                    container = self.page.locator('div[class*="ant-select"]').first
+                    if container:
+                        container.click(timeout=5000)
+                        time.sleep(2)
+                    else:
+                        self.page.click(select_found, timeout=5000)
+                        time.sleep(2)
+                except Exception as e:
+                    self.log_message(f"محاولة بديلة للضغط: {e}")
+                    # محاولة focus ثم arrow down
+                    try:
+                        self.page.focus(select_found)
+                        time.sleep(0.5)
+                        self.page.keyboard.press("ArrowDown")
+                        time.sleep(2)
+                    except:
+                        pass
+                
+                # الحصول على جميع الخيارات
+                option_selectors = [
+                    'div[class*="react-select__option"]',
+                    'div[class*="select__option"]',
+                    'div[class*="ant-select-item"]',
+                    '[role="option"]',
+                    'option',
+                ]
+                
+                options = None
+                for selector in option_selectors:
+                    try:
+                        count = self.page.locator(selector).count()
+                        if count > 0:
+                            options = self.page.locator(selector).all()
+                            self.log_message(f"✅ وجدت الخيارات: {selector} ({count} خيار)")
+                            break
+                    except:
+                        continue
+                
+                if options and len(options) > 0:
+                    self.log_message(f"✅ وجدت {len(options)} خيار")
+                    
+                    for option in options:
+                        try:
+                            text = option.inner_text().strip()
+                            if text and len(text) > 3:
+                                current_programs.add(text)
+                                self.log_message(f"  📋 {text}")
+                        except:
+                            continue
+                    
+                    # إغلاق القائمة
+                    try:
+                        self.page.keyboard.press("Escape")
+                        time.sleep(1)
+                    except:
+                        pass
+                else:
+                    self.log_message("⚠️ لم أجد خيارات - محاولة أخذ screenshot")
+                    try:
+                        self.page.screenshot(path="no_options.png")
+                        self.send_telegram_photo("no_options.png", "⚠️ لم أجد خيارات")
+                    except:
+                        pass
+                
+            except Exception as e:
+                self.log_message(f"⚠️ خطأ في فتح القائمة: {e}")
+                
+                # أخذ screenshot للتشخيص
+                try:
+                    self.page.screenshot(path="dropdown_error.png")
+                    self.send_telegram_photo("dropdown_error.png", f"❌ خطأ: {e}")
+                except:
+                    pass
+            
+            self.log_message(f"📊 إجمالي التخصصات: {len(current_programs)}")
+            
+            # البحث عن تخصصات جديدة
+            new_programs = current_programs - self.last_programs
+            if new_programs:
+                self.log_message(f"🆕 تخصصات جديدة: {len(new_programs)}")
+                for prog in new_programs:
+                    self.log_message(f"  ➕ {prog}")
+            
+            self.last_programs = current_programs
+            self.status["last_check"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            self.status["checks_count"] += 1
+            
+            # التحقق من التخصصات المستهدفة
+            for program in current_programs:
+                for target in self.target_programs:
+                    if target.lower() in program.lower() and program not in self.found_programs:
+                        self.found_programs.add(program)
+                        
+                        self.log_message("=" * 60)
+                        self.log_message(f"🎯🎯🎯 وجدت التخصص: {program} 🎯🎯🎯")
+                        self.log_message("=" * 60)
+                        
+                        # اختيار التخصص
+                        if self.select_program(program):
+                            # الضغط على استمرار
+                            if self.click_continue_button():
+                                alert = f"""
+🎉🎉🎉 <b>تم العثور على التخصص!</b> 🎉🎉🎉
+
+📚 <b>التخصص:</b>
+{program}
+
+✅ <b>تم:</b>
+• اختيار التخصص
+• الضغط على "استمرار"
+
+⏰ <b>الوقت:</b>
+{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+🔗 <b>الرابط:</b>
+{request_url}
+
+⚡⚡⚡ <b>اذهب الآن وأكمل التقديم!</b> ⚡⚡⚡
+                                """
+                                
+                                self.send_telegram_alert(alert)
+                                self.status["state"] = "success"
+                                
+                                # لقطة شاشة
+                                try:
+                                    filename = f"success_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+                                    self.page.screenshot(path=filename)
+                                    self.log_message(f"📸 لقطة الشاشة: {filename}")
+                                    self.send_telegram_photo(filename, f"🎉 نجح! تم اختيار {program}")
+                                except Exception as e:
+                                    self.log_message(f"خطأ في لقطة الشاشة: {e}")
+                                
+                                self.log_message("✅ تم! سأتوقف الآن...")
+                                self.is_running = False
+                                return True
+            
+            return False
+            
+        except Exception as e:
+            self.log_message(f"❌ خطأ في الفحص: {e}")
+            self.status["state"] = "check_error"
+            return False
+        """فحص التخصصات المتاحة"""
+        try:
+            self.log_message(f"🔍 فتح صفحة التقديم...")
+            self.page.goto(request_url, wait_until="domcontentloaded", timeout=60000)
+            time.sleep(5)
+            
+            # أخذ لقطة شاشة
+            try:
+                screenshot_path = "request_page.png"
+                self.page.screenshot(path=screenshot_path)
+                self.log_message("📸 لقطة شاشة لصفحة التقديم: request_page.png")
+                self.send_telegram_photo(screenshot_path, "📋 صفحة التقديم")
+            except Exception as e:
+                self.log_message(f"خطأ في لقطة الشاشة: {e}")
+            
             self.log_message("البحث عن القائمة المنسدلة...")
             
             current_programs = set()
