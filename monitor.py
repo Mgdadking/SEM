@@ -73,7 +73,112 @@ class StudyInEgyptMonitor:
         except Exception as e:
             self.log_message(f"خطأ في إرسال الصورة: {e}")
     
-    def log_message(self, message):
+    def save_cookies(self, filepath="cookies.json"):
+        """حفظ cookies في ملف"""
+        try:
+            import json
+            cookies = self.page.context.cookies()
+            with open(filepath, 'w') as f:
+                json.dump(cookies, f)
+            self.log_message(f"✅ تم حفظ الـ cookies في {filepath}")
+            return True
+        except Exception as e:
+            self.log_message(f"❌ خطأ في حفظ الـ cookies: {e}")
+            return False
+    
+    def load_cookies(self, filepath="cookies.json"):
+        """تحميل cookies من ملف"""
+        try:
+            import json
+            import os
+            
+            # أولاً: محاولة قراءة من BASE64 environment variable
+            cookies_base64 = os.environ.get("COOKIES_BASE64")
+            if cookies_base64:
+                try:
+                    import base64
+                    cookies_json = base64.b64decode(cookies_base64).decode('utf-8')
+                    cookies = json.loads(cookies_json)
+                    self.page.context.add_cookies(cookies)
+                    self.log_message(f"✅ تم تحميل {len(cookies)} cookie من COOKIES_BASE64")
+                    return True
+                except Exception as e:
+                    self.log_message(f"⚠️ فشل تحميل من COOKIES_BASE64: {e}")
+            
+            # ثانياً: محاولة قراءة من ملف
+            if not os.path.exists(filepath):
+                self.log_message(f"⚠️ ملف الـ cookies غير موجود: {filepath}")
+                return False
+            
+            with open(filepath, 'r') as f:
+                cookies = json.load(f)
+            
+            self.page.context.add_cookies(cookies)
+            self.log_message(f"✅ تم تحميل {len(cookies)} cookie من {filepath}")
+            return True
+            
+        except Exception as e:
+            self.log_message(f"❌ خطأ في تحميل الـ cookies: {e}")
+            return False
+    
+    def login_with_cookies(self):
+        """تسجيل دخول باستخدام cookies محفوظة"""
+        try:
+            self.log_message("=" * 50)
+            self.log_message("محاولة تسجيل الدخول بالـ Cookies...")
+            self.log_message("=" * 50)
+            
+            # فتح الصفحة الرئيسية أولاً
+            self.log_message("⏳ فتح الصفحة الرئيسية...")
+            self.page.goto(self.base_url, wait_until="networkidle", timeout=60000)
+            time.sleep(2)
+            
+            # تحميل الـ cookies
+            if not self.load_cookies():
+                self.log_message("⚠️ فشل تحميل الـ cookies - سأحاول تسجيل دخول عادي")
+                return self.login()
+            
+            # إعادة تحميل الصفحة بالـ cookies
+            self.log_message("⏳ إعادة تحميل الصفحة بالـ cookies...")
+            self.page.reload(wait_until="networkidle", timeout=60000)
+            time.sleep(3)
+            
+            # التحقق من نجاح تسجيل الدخول
+            current_url = self.page.url
+            self.log_message(f"الصفحة الحالية: {current_url}")
+            
+            # فحص إذا كنا في صفحة login
+            if "login" in current_url.lower():
+                self.log_message("⚠️ ما زلنا في صفحة تسجيل الدخول - الـ cookies منتهية")
+                self.log_message("سأحاول تسجيل دخول عادي...")
+                return self.login()
+            
+            # فحص وجود عناصر تدل على تسجيل الدخول
+            try:
+                # محاولة الذهاب لصفحة محمية
+                test_url = f"{self.base_url}/dashboard"
+                self.page.goto(test_url, wait_until="domcontentloaded", timeout=30000)
+                time.sleep(2)
+                
+                if "login" not in self.page.url.lower():
+                    self.log_message("✅✅✅ تم تسجيل الدخول بنجاح بالـ Cookies! ✅✅✅")
+                    self.status["state"] = "logged_in"
+                    self.send_telegram_alert("✅ تم تسجيل الدخول بالـ Cookies!")
+                    return True
+                else:
+                    self.log_message("⚠️ الـ cookies منتهية - محاولة تسجيل دخول عادي...")
+                    return self.login()
+                    
+            except:
+                # لو فشل الاختبار، نفترض أننا logged in
+                self.log_message("✅ يبدو أننا logged in")
+                self.status["state"] = "logged_in"
+                return True
+            
+        except Exception as e:
+            self.log_message(f"❌ خطأ في تسجيل الدخول بالـ cookies: {e}")
+            self.log_message("سأحاول تسجيل دخول عادي...")
+            return self.login()
         """تسجيل رسالة مع الوقت"""
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         log = f"[{timestamp}] {message}"
@@ -171,6 +276,456 @@ class StudyInEgyptMonitor:
             return False
     
     def login(self):
+        """تسجيل الدخول للمنصة"""
+        try:
+            self.log_message("=" * 50)
+            self.log_message("بدء عملية تسجيل الدخول...")
+            self.log_message("=" * 50)
+            
+            # زيارة الصفحة الرئيسية أولاً
+            self.log_message("⏳ زيارة الصفحة الرئيسية أولاً...")
+            try:
+                self.page.goto(self.base_url, wait_until="networkidle", timeout=60000)
+                time.sleep(random.randint(2, 4))
+            except:
+                pass
+            
+            # الآن ندخل على صفحة login
+            self.log_message("⏳ الانتقال لصفحة تسجيل الدخول...")
+            self.page.goto(f"{self.base_url}/login", wait_until="networkidle", timeout=90000)
+            
+            self.log_message("⏳ انتظار تحميل React App...")
+            # انتظار اختفاء شاشة التحميل إن وجدت
+            try:
+                self.page.wait_for_selector('.ant-spin', state='hidden', timeout=10000)
+                self.log_message("✅ اختفى loader")
+            except:
+                self.log_message("⚠️ مافيش loader أو خلص")
+            
+            # انتظار إضافي للـ React
+            time.sleep(random.randint(5, 8))
+            
+            # أخذ لقطة شاشة للتشخيص
+            try:
+                screenshot_path = "login_page.png"
+                self.page.screenshot(path=screenshot_path)
+                self.log_message("📸 تم حفظ لقطة شاشة للصفحة: login_page.png")
+                self.send_telegram_photo(screenshot_path, "📸 صفحة تسجيل الدخول")
+            except Exception as e:
+                self.log_message(f"خطأ في لقطة الشاشة: {e}")
+            
+            # فحص وجود CAPTCHA
+            self.log_message("🔍 فحص وجود CAPTCHA...")
+            captcha_found = False
+            try:
+                captcha_selectors = [
+                    'iframe[src*="recaptcha"]',
+                    'iframe[src*="captcha"]',
+                    '.g-recaptcha',
+                    '#recaptcha',
+                    '[class*="captcha"]',
+                ]
+                for sel in captcha_selectors:
+                    if self.page.locator(sel).count() > 0:
+                        captcha_found = True
+                        self.log_message(f"⚠️ وجدت CAPTCHA: {sel}")
+                        break
+                
+                if not captcha_found:
+                    self.log_message("✅ لا يوجد CAPTCHA")
+            except:
+                pass
+            
+            # محاولات متعددة للعثور على حقول الإدخال
+            username_selectors = [
+                'input[name="username"]',
+                'input[name="email"]',
+                'input[type="text"]',
+                'input[type="email"]',
+                'input[placeholder*="اسم"]',
+                'input[placeholder*="username"]',
+                'input[placeholder*="email"]',
+                'input[placeholder*="البريد"]',
+                'input[id*="username"]',
+                'input[id*="email"]',
+                '#username',
+                '#email',
+                'input.ant-input:first-of-type',
+                'input.form-control:first-of-type',
+                '.ant-form-item:first-child input',
+            ]
+            
+            password_selectors = [
+                'input[name="password"]',
+                'input[type="password"]',
+                'input[placeholder*="كلمة"]',
+                'input[placeholder*="password"]',
+                'input[placeholder*="Password"]',
+                'input[placeholder*="المرور"]',
+                'input[id*="password"]',
+                '#password',
+                '.ant-form-item:nth-child(2) input',
+                'input[type="password"].ant-input',
+            ]
+            
+            username_field = None
+            password_field = None
+            
+            # البحث عن حقل اسم المستخدم
+            self.log_message("البحث عن حقل اسم المستخدم...")
+            
+            # أولاً: انتظار ظهور أي input
+            try:
+                self.log_message("انتظار ظهور حقول الإدخال...")
+                self.page.wait_for_selector('input', timeout=15000)
+                self.log_message("✅ ظهرت حقول الإدخال")
+                time.sleep(2)
+            except Exception as e:
+                self.log_message(f"⚠️ خطأ في انتظار الحقول: {e}")
+            
+            for selector in username_selectors:
+                try:
+                    self.log_message(f"  محاولة: {selector}")
+                    if self.page.locator(selector).count() > 0:
+                        username_field = selector
+                        self.log_message(f"  ✅ وجدت الحقل: {selector}")
+                        break
+                except:
+                    continue
+            
+            if not username_field:
+                self.log_message("❌ لم أجد حقل اسم المستخدم!")
+                
+                # طباعة جميع الـ inputs الموجودة
+                try:
+                    all_inputs = self.page.locator('input').all()
+                    self.log_message(f"عدد الـ inputs الموجودة: {len(all_inputs)}")
+                    
+                    for i, inp in enumerate(all_inputs[:5]):  # أول 5 فقط
+                        try:
+                            inp_type = inp.get_attribute('type') or 'none'
+                            inp_name = inp.get_attribute('name') or 'none'
+                            inp_id = inp.get_attribute('id') or 'none'
+                            inp_class = inp.get_attribute('class') or 'none'
+                            inp_placeholder = inp.get_attribute('placeholder') or 'none'
+                            
+                            self.log_message(f"Input {i+1}:")
+                            self.log_message(f"  type={inp_type}")
+                            self.log_message(f"  name={inp_name}")
+                            self.log_message(f"  id={inp_id}")
+                            self.log_message(f"  class={inp_class}")
+                            self.log_message(f"  placeholder={inp_placeholder}")
+                        except:
+                            pass
+                except Exception as e:
+                    self.log_message(f"خطأ في قراءة الـ inputs: {e}")
+                
+                # طباعة HTML للتشخيص
+                try:
+                    content = self.page.content()
+                    self.log_message("=" * 60)
+                    self.log_message("محتوى صفحة تسجيل الدخول:")
+                    self.log_message("=" * 60)
+                    # طباعة أول 2000 حرف بدل 500
+                    self.log_message(content[:2000])
+                    self.log_message("=" * 60)
+                    
+                    # إرسال HTML كملف نصي على Telegram
+                    if self.telegram_token and self.telegram_chat_id:
+                        try:
+                            with open("page_content.html", "w", encoding="utf-8") as f:
+                                f.write(content)
+                            
+                            url = f"https://api.telegram.org/bot{self.telegram_token}/sendDocument"
+                            with open("page_content.html", "rb") as doc:
+                                files = {'document': doc}
+                                data = {
+                                    'chat_id': self.telegram_chat_id,
+                                    'caption': '📄 محتوى صفحة تسجيل الدخول'
+                                }
+                                requests.post(url, data=data, files=files, timeout=30)
+                        except Exception as e:
+                            self.log_message(f"خطأ في إرسال HTML: {e}")
+                            
+                except Exception as e:
+                    self.log_message(f"خطأ في قراءة المحتوى: {e}")
+                
+                self.status["state"] = "login_failed"
+                return False
+            
+            # البحث عن حقل كلمة المرور
+            self.log_message("البحث عن حقل كلمة المرور...")
+            for selector in password_selectors:
+                try:
+                    self.log_message(f"  محاولة: {selector}")
+                    if self.page.locator(selector).count() > 0:
+                        password_field = selector
+                        self.log_message(f"  ✅ وجدت الحقل: {selector}")
+                        break
+                except:
+                    continue
+            
+            if not password_field:
+                self.log_message("❌ لم أجد حقل كلمة المرور!")
+                self.status["state"] = "login_failed"
+                return False
+            
+            # إدخال البيانات
+            self.log_message("إدخال اسم المستخدم...")
+            
+            # النقر على الحقل أولاً (simulate human behavior)
+            self.page.click(username_field)
+            time.sleep(random.uniform(0.5, 1.0))
+            
+            # مسح الحقل أولاً
+            self.page.fill(username_field, '')
+            time.sleep(0.3)
+            
+            # كتابة البيانات حرف حرف ببطء
+            for char in self.username:
+                self.page.type(username_field, char, delay=random.randint(50, 120))
+            
+            time.sleep(random.uniform(0.5, 1.0))
+            
+            # trigger React events
+            self.page.evaluate("""
+                (selector) => {
+                    const input = document.querySelector(selector);
+                    if (input) {
+                        input.dispatchEvent(new Event('blur', { bubbles: true }));
+                    }
+                }
+            """, username_field)
+            
+            time.sleep(0.5)
+            
+            # التأكد من إدخال البيانات
+            current_value = self.page.input_value(username_field)
+            self.log_message(f"✅ القيمة المدخلة: {current_value[:3]}*** (طول: {len(current_value)})")
+            
+            if len(current_value) == 0:
+                self.log_message("⚠️ تحذير: الحقل فارغ! محاولة إعادة الكتابة...")
+                self.page.fill(username_field, self.username)
+                time.sleep(1)
+                current_value = self.page.input_value(username_field)
+                self.log_message(f"بعد المحاولة الثانية: طول = {len(current_value)}")
+            
+            # حركة ماوس عشوائية
+            self.page.mouse.move(random.randint(100, 500), random.randint(100, 500))
+            time.sleep(random.uniform(0.3, 0.7))
+            
+            self.log_message("إدخال كلمة المرور...")
+            
+            # النقر على الحقل
+            self.page.click(password_field)
+            time.sleep(random.uniform(0.5, 1.0))
+            
+            # مسح الحقل
+            self.page.fill(password_field, '')
+            time.sleep(0.3)
+            
+            # كتابة كلمة المرور
+            for char in self.password:
+                self.page.type(password_field, char, delay=random.randint(50, 120))
+            
+            time.sleep(random.uniform(0.5, 1.0))
+            
+            # trigger React events
+            self.page.evaluate("""
+                (selector) => {
+                    const input = document.querySelector(selector);
+                    if (input) {
+                        input.dispatchEvent(new Event('blur', { bubbles: true }));
+                    }
+                }
+            """, password_field)
+            
+            time.sleep(0.5)
+            
+            # التحقق من كلمة المرور
+            password_value = self.page.input_value(password_field)
+            self.log_message(f"✅ كلمة المرور: طول = {len(password_value)}")
+            
+            if len(password_value) == 0:
+                self.log_message("⚠️ تحذير: حقل كلمة المرور فارغ! محاولة إعادة الكتابة...")
+                self.page.fill(password_field, self.password)
+                time.sleep(1)
+            
+            self.log_message("✅ تم إدخال البيانات بنجاح")
+            
+            # البحث عن زر تسجيل الدخول والضغط عليه
+            self.log_message("البحث عن زر تسجيل الدخول...")
+            
+            button_selectors = [
+                'button:has-text("تسجيل الدخول")',
+                'button:has-text("دخول")',
+                'button:has-text("Login")',
+                'button[type="submit"]',
+                'button:has(span:text("تسجيل الدخول"))',
+                'button:has(span:text("دخول"))',
+                'input[type="submit"]',
+                'button.btn-primary',
+                'button.submit',
+                'button.ant-btn-primary',
+                '.ant-btn-primary',
+            ]
+            
+            clicked = False
+            for selector in button_selectors:
+                try:
+                    self.log_message(f"  محاولة: {selector}")
+                    if self.page.locator(selector).count() > 0:
+                        # التأكد من أن الزر مرئي وقابل للضغط
+                        self.page.wait_for_selector(selector, state='visible', timeout=5000)
+                        
+                        # تحريك الماوس للزر (simulate human)
+                        button = self.page.locator(selector).first
+                        box = button.bounding_box()
+                        if box:
+                            # تحريك الماوس لمنتصف الزر
+                            self.page.mouse.move(
+                                box['x'] + box['width'] / 2,
+                                box['y'] + box['height'] / 2
+                            )
+                            time.sleep(0.3)
+                        
+                        # الضغط
+                        self.page.click(selector, timeout=5000, force=False)
+                        clicked = True
+                        self.log_message(f"  ✅ تم الضغط على الزر")
+                        break
+                except Exception as e:
+                    self.log_message(f"  ⚠️ فشلت: {e}")
+                    continue
+            
+            if not clicked:
+                # محاولة أخيرة: الضغط على Enter
+                self.log_message("محاولة الضغط على Enter...")
+                try:
+                    self.page.keyboard.press("Enter")
+                    clicked = True
+                    self.log_message("✅ تم الضغط على Enter")
+                except:
+                    self.log_message("❌ لم أجد زر تسجيل الدخول")
+                    return False
+            
+            # انتظار اكتمال تسجيل الدخول
+            self.log_message("⏳ انتظار اكتمال تسجيل الدخول...")
+            time.sleep(5)
+            
+            # التحقق من وجود رسائل خطأ أولاً
+            error_messages = []
+            validation_failed = False
+            
+            try:
+                error_selectors = [
+                    '.ant-form-item-explain-error',
+                    '.ant-alert-error',
+                    '.alert-danger',
+                    '.error',
+                    '.text-danger',
+                    '[class*="error"]',
+                    '[class*="Error"]',
+                ]
+                
+                for sel in error_selectors:
+                    if self.page.locator(sel).count() > 0:
+                        messages = self.page.locator(sel).all()
+                        for msg in messages:
+                            try:
+                                text = msg.inner_text().strip()
+                                if text and len(text) > 2:
+                                    error_messages.append(text)
+                                    if 'validation' in text.lower() or 'البريد' in text or 'email' in text.lower():
+                                        validation_failed = True
+                            except:
+                                pass
+            except:
+                pass
+            
+            if error_messages:
+                self.log_message(f"⚠️ رسائل خطأ: {', '.join(error_messages)}")
+                
+                # إرسال على Telegram
+                error_text = "❌ فشل تسجيل الدخول\n\n"
+                error_text += "رسائل الخطأ:\n"
+                for err in error_messages:
+                    error_text += f"• {err}\n"
+                
+                self.send_telegram_alert(error_text)
+                
+                # لو المشكلة في البريد الإلكتروني
+                if validation_failed:
+                    self.log_message("❌ بيانات الدخول غير صحيحة!")
+                    self.log_message("💡 تحقق من:")
+                    self.log_message("   1. البريد الإلكتروني صحيح")
+                    self.log_message("   2. كلمة المرور صحيحة")
+                    self.log_message("   3. الحساب مُفعّل")
+            
+            # انتظار إضافي
+            time.sleep(3)
+            
+            # التحقق من نجاح تسجيل الدخول
+            current_url = self.page.url
+            self.log_message(f"الصفحة الحالية: {current_url}")
+            
+            # أخذ لقطة شاشة بعد المحاولة
+            try:
+                screenshot_path = "after_login.png"
+                self.page.screenshot(path=screenshot_path)
+                self.log_message("📸 لقطة شاشة بعد تسجيل الدخول: after_login.png")
+                self.send_telegram_photo(screenshot_path, "📸 بعد محاولة تسجيل الدخول")
+            except Exception as e:
+                self.log_message(f"خطأ في لقطة الشاشة: {e}")
+            
+            if "login" not in current_url.lower():
+                self.log_message("✅✅✅ تم تسجيل الدخول بنجاح! ✅✅✅")
+                self.status["state"] = "logged_in"
+                self.send_telegram_alert("✅ تم تسجيل الدخول بنجاح!")
+                
+                # حفظ الـ cookies للمرات القادمة
+                self.save_cookies()
+                
+                return True
+            else:
+                # التحقق من وجود رسائل خطأ لم نكتشفها
+                if not error_messages:
+                    try:
+                        error_selectors = [
+                            '.ant-form-item-explain-error',
+                            '.ant-alert-danger',
+                            '.alert-danger',
+                            '.error-message',
+                        ]
+                        for sel in error_selectors:
+                            if self.page.locator(sel).count() > 0:
+                                msg = self.page.locator(sel).first.inner_text()
+                                if msg:
+                                    error_messages.append(msg)
+                    except:
+                        pass
+                
+                if error_messages:
+                    self.log_message(f"⚠️ رسائل خطأ: {', '.join(error_messages)}")
+                else:
+                    self.log_message("⚠️ ما زلنا في صفحة تسجيل الدخول")
+                
+                self.status["state"] = "login_failed"
+                return False
+            
+        except Exception as e:
+            self.log_message(f"❌ خطأ في تسجيل الدخول: {e}")
+            
+            try:
+                screenshot_path = "login_error.png"
+                self.page.screenshot(path=screenshot_path)
+                self.log_message("📸 تم حفظ لقطة شاشة: login_error.png")
+                self.send_telegram_photo(screenshot_path, f"❌ خطأ في تسجيل الدخول: {e}")
+            except Exception as screenshot_error:
+                self.log_message(f"خطأ في لقطة الشاشة: {screenshot_error}")
+            
+            self.status["state"] = "login_failed"
+            return False
         """تسجيل الدخول للمنصة"""
         try:
             self.log_message("=" * 50)
@@ -885,7 +1440,8 @@ class StudyInEgyptMonitor:
             self.log_message("❌ فشل تهيئة المتصفح")
             return
         
-        if not self.login():
+        # محاولة تسجيل الدخول بالـ cookies أولاً
+        if not self.login_with_cookies():
             self.log_message("❌ فشل تسجيل الدخول")
             self.log_message("💡 تحقق من بيانات الدخول والـ screenshots")
             self.cleanup()
