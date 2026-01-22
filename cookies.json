@@ -1,0 +1,28 @@
+[
+  {
+    "domain": "admission.study-in-egypt.gov.eg",
+    "expirationDate": 1796114769,
+    "hostOnly": true,
+    "httpOnly": false,
+    "name": "direction",
+    "path": "/",
+    "sameSite": "unspecified",
+    "secure": false,
+    "session": false,
+    "storeId": "0",
+    "value": "rtl"
+  },
+  {
+    "domain": "apiadm.study-in-egypt.gov.eg",
+    "expirationDate": 1769147101.030975,
+    "hostOnly": true,
+    "httpOnly": true,
+    "name": "student-session",
+    "path": "/",
+    "sameSite": "no_restriction",
+    "secure": true,
+    "session": false,
+    "storeId": "0",
+    "value": "s%3Am3vUZwCsAgphFMORagheDbbjZOp4JWA4MsEaQMgv2jDktFZEMciwpox8MeXL5fa6.8z%2BJM1R79FlfFj08k0hskF%2BdHUfvQ6C18VJHKdtZnNA"
+  }
+]
