@@ -99,6 +99,10 @@ class StudyInEgyptMonitor:
                     import base64
                     cookies_json = base64.b64decode(cookies_base64).decode('utf-8')
                     cookies = json.loads(cookies_json)
+                    
+                    # تحويل format Chrome extension لـ Playwright
+                    cookies = self.convert_chrome_cookies_to_playwright(cookies)
+                    
                     self.page.context.add_cookies(cookies)
                     self.log_message(f"✅ تم تحميل {len(cookies)} cookie من COOKIES_BASE64")
                     return True
@@ -113,6 +117,9 @@ class StudyInEgyptMonitor:
             with open(filepath, 'r') as f:
                 cookies = json.load(f)
             
+            # تحويل format Chrome extension لـ Playwright
+            cookies = self.convert_chrome_cookies_to_playwright(cookies)
+            
             self.page.context.add_cookies(cookies)
             self.log_message(f"✅ تم تحميل {len(cookies)} cookie من {filepath}")
             return True
@@ -120,6 +127,44 @@ class StudyInEgyptMonitor:
         except Exception as e:
             self.log_message(f"❌ خطأ في تحميل الـ cookies: {e}")
             return False
+    
+    def convert_chrome_cookies_to_playwright(self, cookies):
+        """تحويل cookies من format Chrome extension لـ Playwright"""
+        playwright_cookies = []
+        
+        for cookie in cookies:
+            pw_cookie = {
+                'name': cookie.get('name'),
+                'value': cookie.get('value'),
+                'domain': cookie.get('domain'),
+                'path': cookie.get('path', '/'),
+            }
+            
+            # إضافة expires إذا كان موجود
+            if 'expirationDate' in cookie:
+                pw_cookie['expires'] = int(cookie['expirationDate'])
+            
+            # إضافة httpOnly إذا كان موجود
+            if 'httpOnly' in cookie:
+                pw_cookie['httpOnly'] = cookie['httpOnly']
+            
+            # إضافة secure إذا كان موجود
+            if 'secure' in cookie:
+                pw_cookie['secure'] = cookie['secure']
+            
+            # إضافة sameSite إذا كان موجود
+            if 'sameSite' in cookie:
+                sameSite = cookie['sameSite']
+                if sameSite == 'unspecified':
+                    pw_cookie['sameSite'] = 'None'
+                elif sameSite == 'no_restriction':
+                    pw_cookie['sameSite'] = 'None'
+                else:
+                    pw_cookie['sameSite'] = sameSite.capitalize()
+            
+            playwright_cookies.append(pw_cookie)
+        
+        return playwright_cookies
     
     def login_with_cookies(self):
         """تسجيل دخول باستخدام cookies محفوظة"""
@@ -1502,6 +1547,7 @@ monitor = None
 def start_monitor_thread():
     """بدء المراقبة في خيط منفصل"""
     global monitor
+    import os
     
     USERNAME = os.environ.get("STUDY_USERNAME")
     PASSWORD = os.environ.get("STUDY_PASSWORD")
@@ -1533,7 +1579,6 @@ def start_monitor_thread():
     
     # لو مافيش cookies، لازم يكون فيه username و password
     if not COOKIES_BASE64:
-        import os.path
         if not os.path.exists("cookies.json"):
             if not all([USERNAME, PASSWORD]):
                 print("❌ خطأ: لازم COOKIES_BASE64 أو (USERNAME + PASSWORD)!")
